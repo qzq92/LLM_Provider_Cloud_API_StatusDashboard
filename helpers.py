@@ -26,6 +26,9 @@ logger = logging.getLogger(__name__)
 gmt_tz = pytz.timezone('GMT')
 sg_tz = pytz.timezone('Singapore')
 
+# Global ChromeDriver instance to prevent multiple creations
+_chrome_driver = None
+
 # Chrome driver functions removed - using per-call synchronous approach
 
 def parse_feed_date(entry, fallback_timezone=None):
@@ -154,9 +157,9 @@ async def get_openai_status() -> Dict[str, Any]:
                 "status": "Operational" if is_operational else "Disrupted",
                 "status_url": status_url,
                 "issue_link": issue_link,
-                "last_update": published_time_sg,
-                "title": title,
-                "description": description[:200] + "..." if len(description) > 200 else description
+                # "last_update": published_time_sg,
+                # "title": title,
+                # "description": description[:200] + "..." if len(description) > 200 else description
             }
     except Exception as e:
         logger.error(f"Error fetching OpenAI status: {e}")
@@ -165,9 +168,10 @@ async def get_openai_status() -> Dict[str, Any]:
         "name": name,
         "status": "Unknown",
         "status_url": status_url,
-        "last_update": "N/A",
-        "title": "Error",
-        "description": "Unable to fetch status"
+        "issue_link": "Refer to status page as no spceific link is available"
+        # "last_update": "N/A",
+        # "title": "Error",
+        # "description": "Unable to fetch status"
     }
 
 async def get_deepseek_status() -> Dict[str, Any]:
@@ -203,9 +207,9 @@ async def get_deepseek_status() -> Dict[str, Any]:
                 "status": "Operational" if is_operational else "Disrupted",
                 "status_url": status_url,
                 "issue_link": issue_link,
-                "last_update": updated_time,
-                "title": title,
-                "description": content[:200] + "..." if len(content) > 200 else content
+                # "last_update": updated_time,
+                # "title": title,
+                # "description": content[:200] + "..." if len(content) > 200 else content
             }
     except Exception as e:
         logger.error(f"Error fetching DeepSeek status: {e}")
@@ -214,9 +218,10 @@ async def get_deepseek_status() -> Dict[str, Any]:
         "name": name,
         "status": "Unknown",
         "status_url": status_url,
-        "last_update": "N/A",
-        "title": "Error",
-        "description": "Unable to fetch status"
+        "issue_link": "Refer to status page as no spceific link is available"
+        # "last_update": "N/A",
+        # "title": "Error",
+        # "description": "Unable to fetch status"
     }
 
 async def get_langsmith_status() -> Dict[str, Any]:
@@ -250,9 +255,9 @@ async def get_langsmith_status() -> Dict[str, Any]:
                 "status": "Operational" if is_operational else "Disrupted", 
                 "status_url": status_url,
                 "issue_link": issue_link,
-                "last_update": published_time_sg,
-                "title": title,
-                "description": description[:200] + "..." if len(description) > 200 else description
+                #"last_update": published_time_sg,
+                # "title": title,
+                # "description": description[:200] + "..." if len(description) > 200 else description
             }
     except Exception as e:
         logging.error(f"Error fetching LangSmith status: {e}")
@@ -261,9 +266,10 @@ async def get_langsmith_status() -> Dict[str, Any]:
         "name": name,
         "status": "Unknown",
         "status_url": status_url,
-        "last_update": "N/A",
-        "title": "Error",
-        "description": "Unable to fetch status"
+        "issue_link": "Refer to status page as no spceific link is available"
+        # "last_update": "N/A",
+        # "title": "Error",
+        # "description": "Unable to fetch status"
     }
 
 def get_gemini_status() -> Dict[str, Any]:
@@ -275,57 +281,73 @@ def get_gemini_status() -> Dict[str, Any]:
     name = "Google AI Studio and Gemini API Status"
     status_url = 'https://aistudio.google.com/status'
     
-    # Create Chrome driver instance (not shared, per-call)
+    # Use global Chrome driver instance to prevent multiple creations
+    global _chrome_driver
     driver = None
     html = None
     
     try:
-        logger.info("Creating Chrome driver for Gemini status")
-        
-        # Try to get Chrome version first
-        chrome_version = get_chrome_version()
-        chrome_options = Options()
-        chrome_options.add_argument("--headless")
-        chrome_options.add_argument("--no-sandbox")
-        chrome_options.add_argument("--disable-dev-shm-usage")
-        chrome_options.add_argument("--disable-gpu")
-        chrome_options.add_argument("--disable-extensions")
-        chrome_options.add_argument("--disable-plugins")
-        chrome_options.add_argument("--disable-images")
-        chrome_options.add_argument("--disable-javascript")
-        
-        # Try undetected_chromedriver first (more reliable)
-        try:
-            logger.info("Attempting to use undetected_chromedriver")
-            driver = uc.Chrome(
-                options=chrome_options, 
-                use_subprocess=True
-            )
-            logger.info("Successfully created undetected_chromedriver instance")
-        except Exception as uc_error:
-            logger.warning(f"undetected_chromedriver failed: {uc_error}")
-            logger.info("Falling back to ChromeDriverManager")
+        # Check if we already have a driver instance
+        if _chrome_driver is not None:
             try:
-                # Fallback to ChromeDriverManager
-                options = webdriver.ChromeOptions()
-                options.add_argument('--headless')
-                options.add_argument("--disable-gpu")
-                options.add_argument("--disable-dev-shm-usage")
-                options.add_argument("--disable-extensions")
-                options.add_argument("--disable-plugins")
-                options.add_argument("--disable-images")
-                options.add_argument("--disable-javascript")
-                
-                driver_manager = ChromeDriverManager()
-                driver = webdriver.Chrome(
-                    service=Service(driver_manager.install()), 
-                    options=options
+                # Test if the existing driver is still functional
+                _chrome_driver.current_url
+                driver = _chrome_driver
+                logger.info("Reusing existing Chrome driver instance")
+            except Exception:
+                # Driver is no longer functional, create a new one
+                logger.info("Existing driver is no longer functional, creating new one")
+                _chrome_driver = None
+        
+        if _chrome_driver is None:
+            logger.info("Creating new Chrome driver for Gemini status")
+            
+            # Try to get Chrome version first
+
+            chrome_options = Options()
+            chrome_options.add_argument("--headless")
+            chrome_options.add_argument("--no-sandbox")
+            chrome_options.add_argument("--disable-dev-shm-usage")
+            chrome_options.add_argument("--disable-gpu")
+            chrome_options.add_argument("--disable-extensions")
+            chrome_options.add_argument("--disable-plugins")
+            chrome_options.add_argument("--disable-images")
+            chrome_options.add_argument("--disable-javascript")
+            
+            # Try undetected_chromedriver first (more reliable)
+            try:
+                logger.info("Attempting to use undetected_chromedriver")
+                _chrome_driver = uc.Chrome(
+                    options=chrome_options, 
+                    use_subprocess=True
                 )
-                logger.info("Successfully created ChromeDriverManager instance")
-            except Exception as cm_error:
-                logger.error(f"ChromeDriverManager also failed: {cm_error}")
-                logger.warning("All Chrome methods failed")
-                driver = None
+                logger.info("Successfully created undetected_chromedriver instance")
+            except Exception as uc_error:
+                logger.warning(f"undetected_chromedriver failed: {uc_error}")
+                logger.info("Falling back to ChromeDriverManager")
+                try:
+                    # Fallback to ChromeDriverManager
+                    options = webdriver.ChromeOptions()
+                    options.add_argument('--headless')
+                    options.add_argument("--disable-gpu")
+                    options.add_argument("--disable-dev-shm-usage")
+                    options.add_argument("--disable-extensions")
+                    options.add_argument("--disable-plugins")
+                    options.add_argument("--disable-images")
+                    options.add_argument("--disable-javascript")
+                    
+                    driver_manager = ChromeDriverManager()
+                    _chrome_driver = webdriver.Chrome(
+                        service=Service(driver_manager.install()), 
+                        options=options
+                    )
+                    logger.info("Successfully created ChromeDriverManager instance")
+                except Exception as cm_error:
+                    logger.error(f"ChromeDriverManager also failed: {cm_error}")
+                    logger.warning("All Chrome methods failed")
+                    _chrome_driver = None
+        
+        driver = _chrome_driver
         
         if driver is not None:
             logger.info("Using Chrome driver for Gemini status")
@@ -340,8 +362,10 @@ def get_gemini_status() -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Error getting Gemini status from url: {status_url}. Error: {e}")
     finally:
-        if driver:
-            logger.info("Quitting Chrome driver")
+        # Don't quit the global driver instance, keep it for reuse
+        # Only quit if there was an error creating the driver
+        if driver and driver != _chrome_driver:
+            logger.info("Quitting temporary Chrome driver")
             try:
                 driver.quit()
             except Exception as e:
@@ -390,10 +414,10 @@ def get_gemini_status() -> Dict[str, Any]:
                     "name": name,
                     "status": "Operational" if is_operational else "Disrupted",
                     "status_url": status_url,
-                    "issue_links": "Refer to status page as no spceific link is available", # No specific issue link provided in the status page
-                    "last_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "title": incident_title,
-                    "description": description[:200] + "..." if len(description) > 200 else description
+                    "issue_link": "Refer to status page as no spceific link is available", # No specific issue link provided in the status page
+                    # "last_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    # "title": incident_title,
+                    # "description": description[:200] + "..." if len(description) > 200 else description
                 }
             else:
                 logger.warning("No ms-status-daily-log element found in Gemini status page")
@@ -402,9 +426,10 @@ def get_gemini_status() -> Dict[str, Any]:
                     "name": name,
                     "status": "Unknown",
                     "status_url": status_url,
-                    "last_update": "N/A",
-                    "title": "Error",
-                    "description": "Expected status element not found on page"
+                    "issue_link": "Refer to status page as no spceific link is available"
+                    # "last_update": "N/A",
+                    # "title": "Error",
+                    # "description": "Expected status element not found on page"
                 }
         except Exception as e:
             logger.error(f"Error fetching Gemini status: {e}")
@@ -415,9 +440,10 @@ def get_gemini_status() -> Dict[str, Any]:
         "name": name,
         "status": "Unknown",
         "status_url": status_url,
-        "last_update": "N/A",
-        "title": "Error",
-        "description": "Unable to fetch status - Chrome method failed"
+        "issue_link": "Refer to status page as no spceific link is available"
+        # "last_update": "N/A",
+        # "title": "Error",
+        # "description": "Unable to fetch status - Chrome method failed"
     }
 
 # Add get perplexity status
@@ -450,9 +476,9 @@ async def get_perplexity_status() -> Dict[str, Any]:
                 "status": "Operational" if is_operational else "Disrupted",
                 "status_url": status_url,
                 "issue_link": issue_link,
-                "last_update": published_time_sg,
-                "title": title,
-                "description": description[:200] + "..." if len(description) > 200 else description
+                # "last_update": published_time_sg,
+                # "title": title,
+                # "description": description[:200] + "..." if len(description) > 200 else description
             }
     except Exception as e:
         logger.error(f"Error fetching Perplexity status: {e}")
@@ -461,9 +487,10 @@ async def get_perplexity_status() -> Dict[str, Any]:
         "name": name,
         "status": "Unknown",
         "status_url": status_url,
-        "last_update": "N/A",
-        "title": "Error",
-        "description": "Unable to fetch status"
+        "issue_link": issue_link
+        # "last_update": "N/A",
+        # "title": "Error",
+        # "description": "Unable to fetch status"
     }
 
 async def get_anthropic_status() -> Dict[str, Any]:
@@ -495,9 +522,9 @@ async def get_anthropic_status() -> Dict[str, Any]:
                 "status": "Operational" if is_operational else "Disrupted",
                 "status_url": status_url,
                 "issue_link": issue_link,
-                "last_update": published_time_sg,
-                "title": title,
-                "description": description[:200] + "..." if len(description) > 200 else description
+                # "last_update": published_time_sg,
+                # "title": title,
+                # "description": description[:200] + "..." if len(description) > 200 else description
             }
     except Exception as e:
         logger.error(f"Error fetching Anthropic status: {e}")
@@ -506,9 +533,10 @@ async def get_anthropic_status() -> Dict[str, Any]:
         "name": name,
         "status": "Unknown",
         "status_url": status_url,
-        "last_update": "N/A",
-        "title": "Error",
-        "description": "Unable to fetch status"
+        "issue_link": "Refer to status page as no spceific link is available"
+        # "last_update": "N/A",
+        # "title": "Error",
+        # "description": "Unable to fetch status"
     }
 
 
@@ -543,9 +571,6 @@ async def get_gcp_status() -> Dict[str, Any]:
                 "status": "Operational" if is_operational else "Disrupted",
                 "status_url": status_url,
                 "issue_link": "Refer to status page as no spceific link is available", # No specific issue link provided in the status page
-                "last_update": published_time_sg,
-                "title": title,
-                "description": content[:200] + "..." if len(content) > 200 else content
             }
     except Exception as e:
         logger.error(f"Error fetching GCP status: {e}")
@@ -554,9 +579,7 @@ async def get_gcp_status() -> Dict[str, Any]:
         "name": name,
         "status": "Unknown",
         "status_url": status_url,
-        "last_update": "N/A",
-        "title": "Error",
-        "description": "Unable to fetch status"
+        "issue_link": "Refer to status page as no spceific link is available"
     }
 
 async def get_azure_status() -> Dict[str, Any]:
@@ -576,26 +599,12 @@ async def get_azure_status() -> Dict[str, Any]:
         #logger.info(f"Feed: {feed}")
         if feed.entries:
             logger.info("Found feed in Azure")
-            latest_entry = feed.entries[0]
-            title = latest_entry.title
-            description = latest_entry.description
-            
-            # Use the new date parsing helper
-            published_time_sg = parse_feed_date(latest_entry)
-            
-            # Check for operational issues
-            description_lower = description.lower()
-            logger.info(description_lower)
-            is_operational = "azure status" in description_lower
-            
+    
             return {
                 "name": name,
                 "status": "Disrupted",
                 "status_url": status_url,
                 "issue_link": "Refer to status page as no spceific link is available", # No specific issue link provided in the status page
-                "last_update": published_time_sg,
-                "title": title,
-                "description": description[:200] + "..." if len(description) > 200 else description
             }
         # No feed found, assume operational
         else:
@@ -604,9 +613,6 @@ async def get_azure_status() -> Dict[str, Any]:
                 "status": "Operational",
                 "status_url": status_url,
                 "issue_link": "Refer to status page as no spceific link is available", # No specific issue link provided in the status page
-                "last_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "title": "Azure",
-                "description": "All systems operational"
             }
     except Exception as e:
         logger.error(f"Error fetching Azure status: {e}")
@@ -615,9 +621,7 @@ async def get_azure_status() -> Dict[str, Any]:
         "name": name,
         "status": "Unknown",
         "status_url": status_url,
-        "last_update": "N/A",
-        "title": "Error",
-        "description": "Unable to fetch status"
+        "issue_link": "Refer to status page as no spceific link is available"
     }
 
 async def get_aws_status() -> Dict[str, Any]:
@@ -630,26 +634,27 @@ async def get_aws_status() -> Dict[str, Any]:
     name = "Amazon Web Service (AWS) Global Cloud Status"
     try:
         # AWS Health Dashboard endpoint
+        rss_url = 'https://status.aws.amazon.com/rss/all.rss'
         status_url = 'https://health.aws.amazon.com/health/status'
-        response = requests.get(status_url, timeout=10)
-        if response.status_code == 200:
-            logger.info("Parsing AWS status page as BeautifulSoup object")
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            # Look for h2 tag with "No recent issues" text
-            logger.info(soup)
-            # Find h2 tag with text "No recent issues" (searching all nested elements)
-            no_events_h2 = soup.find_all('h2', string='No recent issues')
-            is_operational = len(no_events_h2) == 1
-            logger.info(f"AWS status: {is_operational}")
+        logger.info("Parsing AWS status feed as feedparser object")
+        feed = feedparser.parse(rss_url)
+        #logger.info(f"Feed: {feed}")
+        if feed.entries:
+            logger.info("Found feed in AWS")
+
             return {
                 "name": name,
-                "status": "Operational" if is_operational else "Disrupted",
+                "status": "Disrupted",
                 "status_url": status_url,
-                "issue_link": "Refer to status page as no spceific link is  available", # No specific issue link provided in the status page
-                "last_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "title": "N.A.",
-                "description": "N.A"
+                "issue_link": "Refer to status page as no spceific link is available", # No specific issue link provided in the status page
+            }
+        # No feed found, assume operational
+        else:
+            return {
+                "name": name,
+                "status": "Operational",
+                "status_url": status_url,
+                "issue_link": "Refer to status page as no spceific link is available", # No specific issue link provided in the status page
             }
 
     except Exception as e:
@@ -659,7 +664,5 @@ async def get_aws_status() -> Dict[str, Any]:
         "name": name,
         "status": "Unknown",
         "status_url": status_url,
-        "last_update": "N/A",
-        "title": "Error",
-        "description": "Unable to fetch status"
+        "issue_link": "Refer to status page as no spceific link is available"
     }

@@ -1,5 +1,5 @@
 """
-LLM & Cloud API Status Dashboard
+LLM APIs & Cloud Services Status Dashboard
 A Streamlit application for monitoring API and cloud service statuses.
 """
 import time
@@ -13,6 +13,14 @@ from helpers import (
     get_openai_status, get_deepseek_status, get_gemini_status, get_anthropic_status,
     get_aws_status, get_gcp_status, get_azure_status, get_perplexity_status, get_langsmith_status
 )
+
+# Initialize session state for caching
+if 'last_refresh' not in st.session_state:
+    st.session_state.last_refresh = None
+if 'cached_statuses' not in st.session_state:
+    st.session_state.cached_statuses = None
+if 'cache_timestamp' not in st.session_state:
+    st.session_state.cache_timestamp = None
 
 # Configure logging to appear in console
 logging.basicConfig(
@@ -30,7 +38,7 @@ logger = logging.getLogger(__name__)
 
 # Configure the page
 st.set_page_config(
-    page_title="LLM & Cloud API Status Dashboard",
+    page_title="LLM APIs & Cloud Services Status Dashboard",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -165,7 +173,14 @@ async def fetch_all_statuses():
                     "description": f"Error: {str(result)}"
                 }
             else:
-                status_results[service_name] = result
+                # Convert datetime objects to strings for serialization
+                serialized_result = {}
+                for key, value in result.items():
+                    if isinstance(value, datetime):
+                        serialized_result[key] = value.strftime('%Y-%m-%d %H:%M:%S')
+                    else:
+                        serialized_result[key] = value
+                status_results[service_name] = serialized_result
         
         # Update progress
         progress_bar.progress(1.0)
@@ -181,12 +196,10 @@ async def fetch_all_statuses():
 
 def main():
     """Main function to run the Streamlit dashboard."""
-    logger.info("Starting LLM & Cloud API Status Dashboard")
+    logger.info("Starting Dashboard")
     
-    
-    st.title("📊 LLM & Cloud API Status Dashboard")
+    st.title("📊 LLM APIs & Cloud Services Status Dashboard")
     st.markdown("LLM APIs and Cloud Services Status")
-    
     
     # Get current time for display
     gmt_plus_8_timezone = pytz.timezone('Asia/Singapore')
@@ -201,16 +214,36 @@ def main():
     
     with col2:
         if st.button("🔄 Refresh Now", use_container_width=True):
+            # Clear session state cache and rerun
+            st.session_state.cached_statuses = None
+            st.session_state.cache_timestamp = None
+            st.session_state.last_refresh = None
             st.rerun()
     
     with col3:
         countdown_placeholder = st.empty()
         countdown_placeholder.info("⏳ Next refresh in 60 seconds...")
 
-    # Fetch statuses based on selected strategy
-
-    # Use parallel loading with progress
-    all_statuses = asyncio.run(fetch_all_statuses())
+    # Check if we need to fetch new data
+    current_time = datetime.now()
+    should_refresh = (
+        st.session_state.cached_statuses is None or 
+        st.session_state.cache_timestamp is None or
+        (current_time - st.session_state.cache_timestamp).seconds > 60  # 1 minute
+    )
+    
+    if should_refresh:
+        # Fetch statuses with caching
+        all_statuses = asyncio.run(fetch_all_statuses())
+        st.session_state.cached_statuses = all_statuses
+        st.session_state.cache_timestamp = current_time
+        st.session_state.last_refresh = current_time
+    else:
+        # Use cached data
+        all_statuses = st.session_state.cached_statuses
+        st.info("📋 Using cached data (last updated: {})".format(
+            st.session_state.cache_timestamp.strftime('%d-%m-%Y %H:%M:%S')
+        ))
     openai_data = all_statuses['openai']
     deepseek_data = all_statuses['deepseek']
     gemini_data = all_statuses['gemini']
@@ -344,17 +377,18 @@ def main():
     #     })
 
     
-    # Auto-refresh every 60 seconds
-    time.sleep(60)
-    st.rerun()
+    # Auto-refresh using Streamlit's built-in mechanism
+    # Add auto-refresh every 1 minutes
+    if st.button("⏰ Enable Auto-refresh (1 min)", use_container_width=True):
+        st.info("Auto-refresh enabled! The page will refresh every 1 minute.")
+        time.sleep(60)  # 1 minutes
+        st.rerun()
 
 if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
         logger.info("Received KeyboardInterrupt, shutting down gracefully...")
-        cleanup_resources()
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
-        cleanup_resources()
         raise
