@@ -636,19 +636,20 @@ async def get_aws_status() -> Dict[str, Any]:
             logger.info("Parsing AWS status page as BeautifulSoup object")
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            # Look for event-state div class and data-analytics is noEvent
-            no_events_div = soup.find('div', {'class': 'no-events-text', 'data-analytics': 'notification'})
-            logger.info(f"Found no-events div: {no_events_div is not None}")
-            is_operational = no_events_div is not None
-            
+            # Look for h2 tag with "No recent issues" text
+            logger.info(soup)
+            # Find h2 tag with text "No recent issues" (searching all nested elements)
+            no_events_h2 = soup.find_all('h2', string='No recent issues')
+            is_operational = len(no_events_h2) == 1
+            logger.info(f"AWS status: {is_operational}")
             return {
                 "name": name,
                 "status": "Operational" if is_operational else "Disrupted",
                 "status_url": status_url,
-                "issue_link": "Refer to status page as no spceific link is available", # No specific issue link provided in the status page
+                "issue_link": "Refer to status page as no spceific link is  available", # No specific issue link provided in the status page
                 "last_update": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "title": "Amazon Web Services",
-                "description": "All systems operational" if is_operational else "Active Disrupted"
+                "title": "N.A.",
+                "description": "N.A"
             }
 
     except Exception as e:

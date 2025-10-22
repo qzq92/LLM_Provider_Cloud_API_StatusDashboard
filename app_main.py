@@ -7,8 +7,6 @@ import asyncio
 import pytz
 import logging
 import sys
-import signal
-import atexit
 from datetime import datetime
 import streamlit as st
 from helpers import (
@@ -28,18 +26,7 @@ logging.basicConfig(
 # Set up logger for this module
 logger = logging.getLogger(__name__)
 
-# Streamlit-compatible shutdown handling
-# Note: Signal handlers don't work in Streamlit's event loop
-# Using session state and UI-based shutdown instead
-
-def cleanup_resources():
-    """Clean up any resources before shutdown."""
-    logger.info("Cleaning up resources...")
-    # Add any cleanup logic here if needed
-    logger.info("Cleanup completed")
-
-# Register cleanup for normal exit
-atexit.register(cleanup_resources)
+# Simple Streamlit dashboard - no complex shutdown handling needed
 
 # Configure the page
 st.set_page_config(
@@ -196,14 +183,6 @@ def main():
     """Main function to run the Streamlit dashboard."""
     logger.info("Starting LLM & Cloud API Status Dashboard")
     
-    # Initialize session state for shutdown
-    if 'shutdown_requested' not in st.session_state:
-        st.session_state.shutdown_requested = False
-    
-    # Check for shutdown request
-    if st.session_state.shutdown_requested:
-        logger.info("Shutdown requested, stopping dashboard")
-        st.stop()
     
     st.title("📊 LLM & Cloud API Status Dashboard")
     st.markdown("LLM APIs and Cloud Services Status")
@@ -223,12 +202,6 @@ def main():
     with col2:
         if st.button("🔄 Refresh Now", use_container_width=True):
             st.rerun()
-        
-        # Add shutdown button for testing
-        if st.button("🛑 Shutdown", use_container_width=True, type="secondary"):
-            st.session_state.shutdown_requested = True
-            st.warning("Shutting down dashboard...")
-            st.stop()
     
     with col3:
         countdown_placeholder = st.empty()
@@ -371,30 +344,9 @@ def main():
     #     })
 
     
-    # Add JavaScript to handle Ctrl+C in browser
-    st.markdown("""
-    <script>
-    document.addEventListener('keydown', function(event) {
-        if (event.ctrlKey && event.key === 'c') {
-            event.preventDefault();
-            // Show shutdown message
-            alert('Use the Shutdown button or close the browser tab to stop the dashboard');
-        }
-    });
-    </script>
-    """, unsafe_allow_html=True)
-    
-    # Auto-refresh every 60 seconds (with shutdown check)
-    # Note: Ctrl+C won't work in Streamlit's event loop
-    # Use the shutdown button or close the browser tab instead
-    for i in range(60):
-        if st.session_state.shutdown_requested:
-            logger.info("Shutdown requested, stopping auto-refresh")
-            break
-        time.sleep(1)
-    
-    if not st.session_state.shutdown_requested:
-        st.rerun()
+    # Auto-refresh every 60 seconds
+    time.sleep(60)
+    st.rerun()
 
 if __name__ == "__main__":
     try:
