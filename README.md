@@ -10,8 +10,40 @@ A real-time Streamlit dashboard for monitoring LLM API and cloud service statuse
 - **Visual Status Indicators**: Color-coded status cards
 - **Summary Metrics**: Overall uptime percentages
 
-## Installation
+## Environment pre-requisites
+You need to have a python virtual env or Anaconda or Miniconda setup in order to run. There is no .env file required as no credentials are involved.
 
+## Browser Requirements
+
+### Chrome Browser (Recommended)
+The dashboard uses Chrome browser for scraping Google AI Studio status page. If you have Chrome installed, the dashboard will work with full functionality.
+
+### No Chrome Browser? No Problem!
+If you don't have Chrome browser installed, the dashboard will automatically use fallback methods:
+
+1. **Edit `config.py`** and set `ENABLE_CHROME_SCRAPING = False`
+2. **Or set environment variable**: `export ENABLE_CHROME_SCRAPING=false`
+3. **Or install Chrome** for full functionality
+
+#### Fallback Behavior:
+- **Gemini Status**: Uses multiple fallback methods:
+  1. **requests-html**: JavaScript rendering without Chrome (85% accuracy)
+  2. **Enhanced HTTP**: Content analysis of static HTML (70% accuracy)  
+  3. **Basic HTTP**: Simple accessibility check (60% accuracy)
+- **Other Services**: Work normally (they don't require Chrome)
+- **Automatic**: System automatically chooses the best available method
+
+## Installation 
+
+Please do not clone this repo into your OneDrive directory or , network drives, or different disk partitions. It would result in the following warning/error (os error 396):
+```
+warning: Failed to hardlink files; falling back to full copy. This may lead to degraded performance.
+         If the cache and target directories are on different filesystems, hardlinking may not be supported.
+         If this is intentional, set `export UV_LINK_MODE=copy` or use `--link-mode=copy` to suppress this warning.
+error: Failed to install: blinker-1.9.0-py3-none-any.whl (blinker==1.9.0)
+<redacted folder path>: The cloud operation cannot be performed on a file with incompatible hardlinks. (os error 396)
+```
+If that is not possible, you have to follow Option 2 below instead.
 ### Option 1: Using uv (Recommended)
 
 1. Install uv if you haven't already:
@@ -23,22 +55,12 @@ pip install uv
 
 2. Setup the project:
 ```bash
-# Setup dependencies and generate lock file
-make setup
-# or
 uv sync
 ```
 
 3. Run the dashboard:
 ```bash
-# Using make
-make run
-
-# Or directly with uv
 uv run streamlit run app_main.py
-
-# Or using the run script
-python run_dashboard_uv.py
 ```
 
 ### Option 2: Using pip (Traditional)
