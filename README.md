@@ -98,5 +98,5 @@ make shell         # Activate uv shell
 ## Notes
 
 - The dashboard uses RSS feeds and status pages to determine service availability
-- Some services may show "Unknown" status if their status pages are not accessible
+- Some services may show "Unknown" status if their status pages are not accessible or layout has changed.
 - Debug information is available in the collapsible section at the bottom
