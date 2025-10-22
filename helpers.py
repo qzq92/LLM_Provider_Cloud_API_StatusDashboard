@@ -26,6 +26,8 @@ logger = logging.getLogger(__name__)
 gmt_tz = pytz.timezone('GMT')
 sg_tz = pytz.timezone('Singapore')
 
+# Chrome driver functions removed - using per-call synchronous approach
+
 def parse_feed_date(entry, fallback_timezone=None):
     """
     Parse date from RSS/Atom feed entry, handling different formats.
@@ -240,11 +242,9 @@ async def get_langsmith_status() -> Dict[str, Any]:
 
             # Check for operational issues
             description_lower = description.lower()
-
-            matched_keywords = ["elevated", "degrad", "latency", "outage", "failing"]
-
+            logger.info(f"Langsmith description: {description_lower}")
             # Set to false if any of the keyword exist in description
-            is_operational = all(keyword not in description_lower for keyword in matched_keywords)
+            is_operational = "resolved" in description_lower
             return {
                 "name": name,
                 "status": "Operational" if is_operational else "Disrupted", 
@@ -266,45 +266,77 @@ async def get_langsmith_status() -> Dict[str, Any]:
         "description": "Unable to fetch status"
     }
 
-async def get_gemini_status() -> Dict[str, Any]:
+def get_gemini_status() -> Dict[str, Any]:
     """
-    Get Google Gemini API status using simple HTTP request (no Chrome needed).
+    Get Google Gemini API status using Chrome driver (synchronous).
     Returns:
         Dict containing status information
     """
     name = "Google AI Studio and Gemini API Status"
     status_url = 'https://aistudio.google.com/status'
     
-
-    # First, try to get Chrome version
-    chrome_version = get_chrome_version()
-    chrome_options = Options()
-    chrome_options.add_argument("--headless")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    
+    # Create Chrome driver instance (not shared, per-call)
     driver = None
     html = None
-    if chrome_version is None:
-        options = webdriver.ChromeOptions()
-        options.add_argument('--headless')
-        options.add_argument("--disable-gpu")
-        options.add_argument("--disable-dev-shm-usage")
-        driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
-        await asyncio.sleep(5)
-
-    else:    
-        logger.info(f"Detected Chrome version: {chrome_version}")
-        driver = uc.Chrome(options=chrome_options, use_subprocess=True, version_main=chrome_version)
-        
+    
     try:
-        # Let undetected_chromedriver use the detected Chrome version
-        # use_subprocess=True helps avoid session connection issues
-        driver.get(status_url)
-        # Wait for the first ms-status-daily-log element to be present with shorter timeout
-        wait = WebDriverWait(driver, 10)  # Reduced from 20 to 10 seconds
-        wait.until(EC.presence_of_element_located((By.TAG_NAME, "ms-status-daily-log")))
-        html = driver.page_source
+        logger.info("Creating Chrome driver for Gemini status")
+        
+        # Try to get Chrome version first
+        chrome_version = get_chrome_version()
+        chrome_options = Options()
+        chrome_options.add_argument("--headless")
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--disable-gpu")
+        chrome_options.add_argument("--disable-extensions")
+        chrome_options.add_argument("--disable-plugins")
+        chrome_options.add_argument("--disable-images")
+        chrome_options.add_argument("--disable-javascript")
+        
+        # Try undetected_chromedriver first (more reliable)
+        try:
+            logger.info("Attempting to use undetected_chromedriver")
+            driver = uc.Chrome(
+                options=chrome_options, 
+                use_subprocess=True
+            )
+            logger.info("Successfully created undetected_chromedriver instance")
+        except Exception as uc_error:
+            logger.warning(f"undetected_chromedriver failed: {uc_error}")
+            logger.info("Falling back to ChromeDriverManager")
+            try:
+                # Fallback to ChromeDriverManager
+                options = webdriver.ChromeOptions()
+                options.add_argument('--headless')
+                options.add_argument("--disable-gpu")
+                options.add_argument("--disable-dev-shm-usage")
+                options.add_argument("--disable-extensions")
+                options.add_argument("--disable-plugins")
+                options.add_argument("--disable-images")
+                options.add_argument("--disable-javascript")
+                
+                driver_manager = ChromeDriverManager()
+                driver = webdriver.Chrome(
+                    service=Service(driver_manager.install()), 
+                    options=options
+                )
+                logger.info("Successfully created ChromeDriverManager instance")
+            except Exception as cm_error:
+                logger.error(f"ChromeDriverManager also failed: {cm_error}")
+                logger.warning("All Chrome methods failed")
+                driver = None
+        
+        if driver is not None:
+            logger.info("Using Chrome driver for Gemini status")
+            # Navigate to the status page
+            driver.get(status_url)
+            # Wait for the first ms-status-daily-log element to be present
+            wait = WebDriverWait(driver, 10)
+            wait.until(EC.presence_of_element_located((By.TAG_NAME, "ms-status-daily-log")))
+            html = driver.page_source
+            logger.info("Successfully retrieved Gemini status page content")
+        
     except Exception as e:
         logger.error(f"Error getting Gemini status from url: {status_url}. Error: {e}")
     finally:
@@ -320,13 +352,13 @@ async def get_gemini_status() -> Dict[str, Any]:
         try:
             soup = BeautifulSoup(html, "html.parser")
             logger.info("Parsing html as BeautifulSoup object")
-            # Find the first ms-status-daily-log element
+            
+            # Try to find the ms-status-daily-log element first (Chrome method)
             ms_status_log = soup.find("ms-status-daily-log")
             if ms_status_log:
                 gmt_tz = pytz.timezone('GMT')
                 current_time = datetime.now(tz=gmt_tz)
                 logger.info("Found ms-status-daily-log element in the page")
-                #print(ms_status_log.prettify())
                 # Get string
                 status_text = ms_status_log.get_text(separator="\n", strip=False)
                 status_elem_list = status_text.split("\n")
@@ -363,18 +395,29 @@ async def get_gemini_status() -> Dict[str, Any]:
                     "title": incident_title,
                     "description": description[:200] + "..." if len(description) > 200 else description
                 }
+            else:
+                logger.warning("No ms-status-daily-log element found in Gemini status page")
+                # Return error if the expected element is not found
+                return {
+                    "name": name,
+                    "status": "Unknown",
+                    "status_url": status_url,
+                    "last_update": "N/A",
+                    "title": "Error",
+                    "description": "Expected status element not found on page"
+                }
         except Exception as e:
             logger.error(f"Error fetching Gemini status: {e}")
     
-    # If we reach here, both Chrome and fallback failed
-    logger.warning("All Gemini status methods failed, returning error status")
+    # If we reach here, Chrome method failed
+    logger.warning("Chrome method failed for Gemini status, returning error status")
     return {
         "name": name,
         "status": "Unknown",
         "status_url": status_url,
         "last_update": "N/A",
         "title": "Error",
-        "description": "Unable to fetch status - Chrome and fallback methods failed"
+        "description": "Unable to fetch status - Chrome method failed"
     }
 
 # Add get perplexity status

@@ -3,11 +3,12 @@ LLM & Cloud API Status Dashboard
 A Streamlit application for monitoring API and cloud service statuses.
 """
 import time
-import concurrent.futures
 import asyncio
 import pytz
 import logging
 import sys
+import signal
+import atexit
 from datetime import datetime
 import streamlit as st
 from helpers import (
@@ -26,6 +27,19 @@ logging.basicConfig(
 
 # Set up logger for this module
 logger = logging.getLogger(__name__)
+
+# Streamlit-compatible shutdown handling
+# Note: Signal handlers don't work in Streamlit's event loop
+# Using session state and UI-based shutdown instead
+
+def cleanup_resources():
+    """Clean up any resources before shutdown."""
+    logger.info("Cleaning up resources...")
+    # Add any cleanup logic here if needed
+    logger.info("Cleanup completed")
+
+# Register cleanup for normal exit
+atexit.register(cleanup_resources)
 
 # Configure the page
 st.set_page_config(
@@ -130,10 +144,11 @@ async def fetch_all_statuses():
     
     try:
         # Use asyncio.gather() to run all status functions concurrently
+        # Note: get_gemini_status is now synchronous, so we run it in a thread
         results = await asyncio.gather(
             get_openai_status(),
-            get_deepseek_status(), 
-            get_gemini_status(),
+            get_deepseek_status(),
+            asyncio.to_thread(get_gemini_status),  # Run sync function in thread
             get_anthropic_status(),
             get_perplexity_status(),
             get_langsmith_status(),
@@ -180,11 +195,19 @@ async def fetch_all_statuses():
 def main():
     """Main function to run the Streamlit dashboard."""
     logger.info("Starting LLM & Cloud API Status Dashboard")
+    
+    # Initialize session state for shutdown
+    if 'shutdown_requested' not in st.session_state:
+        st.session_state.shutdown_requested = False
+    
+    # Check for shutdown request
+    if st.session_state.shutdown_requested:
+        logger.info("Shutdown requested, stopping dashboard")
+        st.stop()
+    
     st.title("📊 LLM & Cloud API Status Dashboard")
     st.markdown("LLM APIs and Cloud Services Status")
     
-    # Auto-refresh functionality
-    st.markdown("🔄 **Auto-refresh every 30 seconds**")
     
     # Get current time for display
     gmt_plus_8_timezone = pytz.timezone('Asia/Singapore')
@@ -200,10 +223,16 @@ def main():
     with col2:
         if st.button("🔄 Refresh Now", use_container_width=True):
             st.rerun()
+        
+        # Add shutdown button for testing
+        if st.button("🛑 Shutdown", use_container_width=True, type="secondary"):
+            st.session_state.shutdown_requested = True
+            st.warning("Shutting down dashboard...")
+            st.stop()
     
     with col3:
         countdown_placeholder = st.empty()
-        countdown_placeholder.info("⏳ Next refresh in 30 seconds...")
+        countdown_placeholder.info("⏳ Next refresh in 60 seconds...")
 
     # Fetch statuses based on selected strategy
 
@@ -340,38 +369,40 @@ def main():
     #         "Cloud Services": cloud_services,
     #         "Last Refresh in GMT+8": datetime.now(tz=gmt_plus_8_timezone).strftime('%d-%m-%Y %H:%M:%S')
     #     })
+
     
-    # Add JavaScript countdown timer for main screen
+    # Add JavaScript to handle Ctrl+C in browser
     st.markdown("""
     <script>
-    function startCountdown() {
-        let timeLeft = 30;
-        // Target the countdown element in the main content area
-        const countdownElement = document.querySelector('.stAlert .stMarkdown p');
-        
-        const timer = setInterval(() => {
-            timeLeft--;
-            if (countdownElement && countdownElement.textContent.includes('Next refresh')) {
-                countdownElement.textContent = `⏳ Next refresh in ${timeLeft} seconds...`;
-            }
-            if (timeLeft <= 0) {
-                clearInterval(timer);
-            }
-        }, 1000);
-    }
-    
-    // Start countdown when page loads
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', startCountdown);
-    } else {
-        startCountdown();
-    }
+    document.addEventListener('keydown', function(event) {
+        if (event.ctrlKey && event.key === 'c') {
+            event.preventDefault();
+            // Show shutdown message
+            alert('Use the Shutdown button or close the browser tab to stop the dashboard');
+        }
+    });
     </script>
     """, unsafe_allow_html=True)
     
-    # Auto-refresh every 30 seconds
-    time.sleep(30)
-    st.rerun()
+    # Auto-refresh every 60 seconds (with shutdown check)
+    # Note: Ctrl+C won't work in Streamlit's event loop
+    # Use the shutdown button or close the browser tab instead
+    for i in range(60):
+        if st.session_state.shutdown_requested:
+            logger.info("Shutdown requested, stopping auto-refresh")
+            break
+        time.sleep(1)
+    
+    if not st.session_state.shutdown_requested:
+        st.rerun()
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        logger.info("Received KeyboardInterrupt, shutting down gracefully...")
+        cleanup_resources()
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
+        cleanup_resources()
+        raise
