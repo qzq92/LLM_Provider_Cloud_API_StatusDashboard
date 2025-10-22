@@ -5,6 +5,7 @@ A Streamlit application for monitoring API and cloud service statuses.
 import time
 import asyncio
 import concurrent.futures
+import pytz
 from datetime import datetime
 import streamlit as st
 from helpers import (
@@ -66,15 +67,28 @@ def create_status_card(service_data):
     if service_data["status"] == "Unknown":
         status_icon = "🟡"
 
-    return f"""
+    # Create basic card content
+    card_content = f"""
     <div class="status-card {status_class}">
         <div class="status-indicator">{status_icon}</div>
         <h3>{service_data['name']}</h3>
         <p><strong>Status:</strong> {service_data['status']}</p>
+    """
+    
+    # For operational services, show minimal info (status + source)
+    if service_data["operational"]:
+        card_content += f"""
+        <p><strong>Source:</strong> {service_data.get('title', 'API Status')}</p>
+        """
+    else:
+        # For issues/unknown status, show full details
+        card_content += f"""
         <p><strong>Last Update:</strong> {service_data['last_update']}</p>
         <p><strong>Details:</strong> {service_data['description']}</p>
-    </div>
-    """
+        """
+    
+    card_content += "</div>"
+    return card_content
 
 @st.cache_data(ttl=60)  # Cache for 60 seconds
 def fetch_llm_statuses():
@@ -166,7 +180,7 @@ def fetch_all_statuses():
 def main():
     """Main function to run the Streamlit dashboard."""
     st.title("📊 LLM & Cloud API Status Dashboard")
-    st.markdown("Real-time monitoring of LLM APIs and Cloud Services")
+    st.markdown("Near Real-time monitoring of LLM APIs and Cloud Services")
 
     # Sidebar controls
     st.sidebar.header("⚙️ Controls")
@@ -174,13 +188,14 @@ def main():
     # Loading strategy selection
     loading_strategy = st.sidebar.selectbox(
         "Loading Strategy",
-        ["Parallel (Fast)", "Sequential (Reliable)", "Cached (Fastest)"],
+        ["Parallel (Fast)", "Sequential (Reliable)"],
         index=0,
         help="Choose how to fetch API statuses"
     )
     
+    
     # Auto-refresh toggle
-    auto_refresh = st.sidebar.checkbox("Auto-refresh (30 seconds)", value=True)
+    auto_refresh = st.sidebar.checkbox("Auto-refresh (30 seconds)", value=False)
     if auto_refresh:
         st.sidebar.info("Dashboard will refresh every 30 seconds")
         time.sleep(30)
@@ -190,17 +205,15 @@ def main():
     if st.sidebar.button("🔄 Refresh Now"):
         st.rerun()
 
-    # Last updated timestamp
-    last_updated = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    st.sidebar.markdown(f"**Last Updated:** {last_updated}")
+    # Last updated timestamp in GMT+8
+    # Define the GMT+8 timezone
+    gmt_plus_8_timezone = pytz.timezone('Asia/Shanghai') # Or another city in GMT+8, e.g., 'Asia/Singapore'
+    last_updated = datetime.now(tz=gmt_plus_8_timezone).strftime('%d-%m-%Y %H:%M:%S')
+
+    st.sidebar.markdown(f"**Last Updated (GMT+8):** {last_updated}")
 
     # Fetch statuses based on selected strategy
-    if loading_strategy == "Cached (Fastest)":
-        # Use cached parallel loading
-        with st.spinner("Fetching cached statuses..."):
-            openai_data, deepseek_data, gemini_data, anthropic_data = fetch_llm_statuses()
-            aws_data, gcp_data, azure_data = fetch_cloud_statuses()
-    elif loading_strategy == "Parallel (Fast)":
+    if loading_strategy == "Parallel (Fast)":
         # Use parallel loading with progress
         all_statuses = fetch_all_statuses()
         openai_data = all_statuses['openai']
@@ -293,10 +306,10 @@ def main():
             value=f"{total_operational}/{total_services}",
             delta=f"{overall_percentage:.1f}%"
         )
-
+    
     # Footer
     st.markdown("---")
-    st.markdown("**Note:** This dashboard provides 30 seconds status monitoring. Data is refreshed automatically.")
+    st.markdown("**Note:** This dashboard provides near real-time status monitoring. Operational services show minimal information, while issues display full details.")
 
     # Performance metrics
     with st.expander("📊 Performance Metrics"):
