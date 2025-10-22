@@ -1,12 +1,8 @@
 [project]
-name = "llm-cloud-status-dashboard"
+name = "llm-provider-cloud-api-status-dashboard"
 version = "0.1.0"
 description = "A Streamlit dashboard for monitoring LLM API and cloud service statuses"
-authors = [
-    {name = "Your Name", email = "your.email@example.com"}
-]
-readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 dependencies = [
     "streamlit>=1.28.0",
     "requests>=2.31.0",
@@ -14,24 +10,3 @@ dependencies = [
     "beautifulsoup4>=4.12.0",
     "pytz>=2023.3",
 ]
-
-[project.optional-dependencies]
-dev = [
-    "pytest>=7.0.0",
-    "black>=23.0.0",
-    "flake8>=6.0.0",
-    "mypy>=1.0.0",
-]
-
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
-[tool.uv]
-dev-dependencies = [
-    "pytest>=7.0.0",
-    "black>=23.0.0",
-    "flake8>=6.0.0",
-    "mypy>=1.0.0",
-]
-
