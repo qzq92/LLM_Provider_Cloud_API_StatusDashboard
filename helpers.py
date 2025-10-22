@@ -8,7 +8,7 @@ import logging
 import requests
 import feedparser
 from datetime import datetime
-from beautifulsoup4 import BeautifulSoup
+from bs4 import BeautifulSoup
 def get_chrome_version()-> Union[int, None]:
     """
     Detect the installed Chrome browser version.
