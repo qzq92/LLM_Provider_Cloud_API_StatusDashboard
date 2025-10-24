@@ -11,7 +11,25 @@ A 1 min refresh real-time Streamlit dashboard for monitoring LLM API and cloud s
 - **Visual Status Indicators**: Color-coded status cards with source links
 - **Summary Metrics**: Overall uptime percentages and service counts
 - **Simple Controls**: Clean UI with essential refresh functionality
-- **Chrome Integration**: Singleton Chrome driver for Gemini status scraping
+- **Chrome Integration**: Separate Chrome driver instances for Gemini, Alibaba Cloud, and Dify status scraping
+- **Dynamic Content Handling**: Advanced web scraping for services with dynamic content loading
+- **Connection Pool Management**: Efficient HTTP connection pooling to prevent connection issues
+
+## Sample Dashboard
+
+The dashboard provides a comprehensive view of all monitored services with real-time status updates:
+
+![Sample Dashboard](./img/sample_dashboard.png)
+
+**Dashboard Features:**
+- **Real-time Status Cards**: Color-coded cards showing operational status for each service
+- **Auto-refresh Timer**: Automatic updates every 60 seconds with countdown display
+- **Summary Metrics**: Overall operational percentages for each service category
+- **Responsive Layout**: Clean, organized interface that works on different screen sizes
+- **Status Indicators**: 
+  - 🟢 Green: All systems operational
+  - 🔴 Red: Service disruptions detected
+  - 🟡 Yellow: Status unknown or connection issues
 
 ## Environment pre-requisites
 You need to have a python virtual env or Anaconda or Miniconda setup in order to run. There is no .env file required as no credentials are involved.
@@ -21,7 +39,7 @@ You need to have a python virtual env or Anaconda or Miniconda setup in order to
 ### Chrome Browser (Required for Gemini, Alibaba Cloud, and Dify)
 The dashboard uses Chrome browser for scraping Google AI Studio, Alibaba Cloud, and Dify status pages. Chrome is required for Gemini, Alibaba Cloud, and Dify status monitoring.
 
-**Note**: The dashboard uses a singleton Chrome driver pattern to ensure only one browser instance runs at a time, even with async operations.
+**Note**: The dashboard uses separate Chrome driver instances for Gemini, Alibaba Cloud, and Dify to prevent interference between different services while maintaining efficient resource management.
 
 ### Chrome Installation
 Make sure you have Chrome browser installed on your system. The dashboard will automatically detect and use the installed Chrome version.
@@ -207,6 +225,23 @@ The dashboard determines service status using specific logic for each service:
 - **Simple Architecture**: Clean, straightforward implementation
 - **Standard Streamlit**: Uses standard Streamlit patterns for reliability
 
+## Recent Improvements & Corrections
+
+### Code Corrections Made
+- **Fixed Indentation Issues**: Corrected indentation problems in LlamaIndex and Gemini functions
+- **Enhanced Error Handling**: Improved try-except blocks with proper exception handling
+- **Dynamic Content Expansion**: Added proper element expansion logic for Dify, Gemini, and Alibaba Cloud
+- **Separate Chrome Instances**: Implemented isolated Chrome drivers to prevent interference
+- **Connection Pool Management**: Added HTTP session pooling to prevent connection pool exhaustion
+- **Resource Cleanup**: Implemented graceful shutdown of Chrome drivers and HTTP sessions
+
+### Technical Enhancements
+- **Improved Logging**: Enhanced logging with consistent formatting and better error messages
+- **Better Element Detection**: Improved element detection for dynamic content loading
+- **Connection Efficiency**: Optimized HTTP connections with retry strategies
+- **Resource Isolation**: Separate Chrome driver instances for different services
+- **Error Recovery**: Better error handling and recovery mechanisms
+
 ## Development
 
 ### Available Commands (using Make)
@@ -257,3 +292,8 @@ make shell         # Activate uv shell
 - The dashboard uses async operations for better performance and user experience
 - All status checks run concurrently for faster loading times
 - Simple and clean user interface with essential functionality
+
+
+## Disclaimer
+- Note that the operational status are based on keyword/phrase matching based on personal interpretation and simple pattern analysis. Should there be deviation in the use of phrases/word by these individual RSS and status page, it would lead to inaccurate operational status reported.
+- The main codebase is developed with Cursor coding assistant Agent as part of experimentation to identify its effectiveness. As this is a simple prototype project, it is not meant to be optimal or secure. 
