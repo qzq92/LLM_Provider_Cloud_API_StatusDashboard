@@ -8,6 +8,8 @@ A real-time Streamlit dashboard for monitoring LLM API and cloud service statuse
 
 The dashboard automatically refreshes every 60 seconds with real-time status updates.
 
+*packages.txt* contains necessary apt package for streamlit server to install the deprecated python packages in order for the app to work.
+
 ## Features
 
 - **LLM API Monitoring**: OpenAI, DeepSeek, Gemini, Anthropic, Perplexity, LangSmith, LlamaIndex, and Dify
