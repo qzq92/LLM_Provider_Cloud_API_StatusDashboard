@@ -204,7 +204,7 @@ def main():
     """Main function to run the Streamlit dashboard."""
     logger.info("Starting Dashboard")
     
-    st.title("📊 LLM APIs & Cloud Services Status Dashboard")
+    st.title("📊 LLM APIs & Cloud Services Status Dashboard (refresh every 5minutes)")
 
     # Get current time for display
     gmt_plus_8_timezone = pytz.timezone('Asia/Singapore')
@@ -221,8 +221,8 @@ def main():
     # Display last refresh time
     st.info(f"⏰ **Last Refresh (GMT+8):** {last_updated}")
     
-    # Auto-refresh logic - check if 60 seconds have passed
-    if time_since_refresh >= 60:
+    # Auto-refresh logic - check if 300 seconds have passed
+    if time_since_refresh >= 300:
         # Update the last refresh time
         st.session_state.last_refresh_time = current_time
         # Clear cache to force fresh data fetch
@@ -339,7 +339,7 @@ def main():
     #     })
     
     # Auto-refresh mechanism at the end of the function
-    time.sleep(60)  # Wait 60 second
+    time.sleep(300)  # Wait 300 second
     st.rerun()
 
 if __name__ == "__main__":
