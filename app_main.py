@@ -191,7 +191,6 @@ async def fetch_all_statuses():
         
         # Update progress
         progress_bar.progress(1.0)
-        status_text.text("🎉 Status dashboard ready!")
         
         return status_results
         
@@ -206,37 +205,34 @@ def main():
     logger.info("Starting Dashboard")
     
     st.title("📊 LLM APIs & Cloud Services Status Dashboard")
-    st.markdown("LLM APIs and Cloud Services Status")
-    
+
     # Get current time for display
     gmt_plus_8_timezone = pytz.timezone('Asia/Singapore')
     current_time = datetime.now(tz=gmt_plus_8_timezone)
     last_updated = current_time.strftime('%d-%m-%Y %H:%M:%S')
     
-    # Display last refresh time and controls on main screen
-    col1, col2, col3 = st.columns([2, 1, 1])
+    # Simple auto-refresh mechanism
+    if 'last_refresh_time' not in st.session_state:
+        st.session_state.last_refresh_time = current_time
     
-    with col1:
-        st.info(f"⏰ **Last Refresh (GMT+8):** {last_updated}")
+    # Calculate time since last refresh
+    time_since_refresh = (current_time - st.session_state.last_refresh_time).seconds
     
-    with col2:
-        if st.button("🔄 Refresh Now", use_container_width=True):
-            # Clear session state cache and rerun
-            st.session_state.cached_statuses = None
-            st.session_state.cache_timestamp = None
-            st.session_state.last_refresh = None
-            st.rerun()
+    # Display last refresh time
+    st.info(f"⏰ **Last Refresh (GMT+8):** {last_updated}")
     
-    with col3:
-        countdown_placeholder = st.empty()
-        countdown_placeholder.info("⏳ Next refresh in 60 seconds...")
+    # Auto-refresh logic - check if 60 seconds have passed
+    if time_since_refresh >= 60:
+        # Update the last refresh time
+        st.session_state.last_refresh_time = current_time
+        # Clear cache to force fresh data fetch
+        st.session_state.cached_statuses = None
+        st.session_state.cache_timestamp = None
 
     # Check if we need to fetch new data
-    current_time = datetime.now()
     should_refresh = (
-        st.session_state.cached_statuses is None or 
-        st.session_state.cache_timestamp is None or
-        (current_time - st.session_state.cache_timestamp).seconds > 60  # 1 minute
+        st.session_state.cached_statuses is None or
+        st.session_state.cache_timestamp is None
     )
     
     if should_refresh:
@@ -248,9 +244,6 @@ def main():
     else:
         # Use cached data
         all_statuses = st.session_state.cached_statuses
-        st.info("📋 Using cached data (last updated: {})".format(
-            st.session_state.cache_timestamp.strftime('%d-%m-%Y %H:%M:%S')
-        ))
     openai_data = all_statuses['openai']
     deepseek_data = all_statuses['deepseek']
     gemini_data = all_statuses['gemini']
@@ -322,57 +315,6 @@ def main():
     with col9:
         st.markdown(create_status_card(alicloud_data, include_details=False), unsafe_allow_html=True)
 
-    # Summary metrics
-    st.header("📈 Summary")
-
-    # Calculate summary metrics
-    llm_services = [openai_data, deepseek_data, gemini_data, anthropic_data, perplexity_data]
-    langsmith_services = [langsmith_data, llamaindex_data, dify_data]
-    cloud_services = [aws_data, gcp_data, azure_data, alicloud_data]
-
-    llm_operational = sum(1 for service in llm_services if service["status"] == "Operational")
-    langsmith_operational = sum(1 for service in langsmith_services if service["status"] == "Operational")
-    cloud_operational = sum(1 for service in cloud_services if service["status"] == "Operational")
-
-    col9, col10, col11, col12 = st.columns(4)
-
-    with col9:
-        llm_percentage = llm_operational/len(llm_services)*100
-        st.metric(
-            label="LLM APIs Operational",
-            value=f"{llm_operational}/{len(llm_services)}",
-            delta=f"{llm_percentage:.1f}%"
-        )
-
-    with col10:
-        langsmith_percentage = langsmith_operational/len(langsmith_services)*100
-        st.metric(
-            label="Other LLM related platforms API status",
-            value=f"{langsmith_operational}/{len(langsmith_services)}",
-            delta=f"{langsmith_percentage:.1f}%"
-        )
-
-    with col11:
-        cloud_percentage = cloud_operational/len(cloud_services)*100
-        st.metric(
-            label="Cloud Services Operational",
-            value=f"{cloud_operational}/{len(cloud_services)}",
-            delta=f"{cloud_percentage:.1f}%"
-        )
-
-    with col12:
-        total_operational = llm_operational + langsmith_operational + cloud_operational
-        total_services = len(llm_services) + len(langsmith_services) + len(cloud_services)
-        overall_percentage = total_operational/total_services*100
-        st.metric(
-            label="Overall Uptime",
-            value=f"{total_operational}/{total_services}",
-            delta=f"{overall_percentage:.1f}%"
-        )
-    
-    # Footer
-    st.markdown("---")
-    st.markdown("**Note:** This dashboard provides near real-time status monitoring. Operational services show minimal information, while issues display full details.")
 
     # Performance metrics
     # with st.expander("📊 Performance Metrics"):
@@ -395,14 +337,10 @@ def main():
     #         "Cloud Services": cloud_services,
     #         "Last Refresh in GMT+8": datetime.now(tz=gmt_plus_8_timezone).strftime('%d-%m-%Y %H:%M:%S')
     #     })
-
     
-    # Auto-refresh using Streamlit's built-in mechanism
-    # Add auto-refresh every 1 minutes
-    if st.button("⏰ Enable Auto-refresh (1 min)", use_container_width=True):
-        st.info("Auto-refresh enabled! The page will refresh every 1 minute.")
-        time.sleep(60)  # 1 minutes
-        st.rerun()
+    # Auto-refresh mechanism at the end of the function
+    time.sleep(60)  # Wait 60 second
+    st.rerun()
 
 if __name__ == "__main__":
     try:

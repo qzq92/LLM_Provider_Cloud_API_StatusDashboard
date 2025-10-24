@@ -396,7 +396,8 @@ async def get_llamaindex_status() -> Dict[str, Any]:
         Dict containing status information
     """
     name = "LlamaIndex"
-        status_url = 'https://llamaindex.statuspage.io/'
+    status_url = 'https://llamaindex.statuspage.io/'
+
     try:
         # Use session to fetch the status page
         session = get_http_session()
@@ -414,7 +415,7 @@ async def get_llamaindex_status() -> Dict[str, Any]:
             text_content = element.get_text().strip().lower()
             key_phrase = "no incidents reported today"
             if key_phrase in text_content:
-                logger.info(f"LlamaIndex: Found required key phrase {key_phrase} to indicate no issue")
+                logger.info(f"LlamaIndex: Found required key phrase: {key_phrase} to indicate no issue")
                 is_operational = True
                 break
         
@@ -454,7 +455,7 @@ def get_dify_status() -> Dict[str, Any]:
     Returns:
         Dict containing status information
     """
-    name = "Dify.AI API Status"
+    name = "Dify.AI"
     status_url = 'https://dify.statuspage.io/'
     
     # Use dedicated Dify Chrome driver instance to prevent interference
@@ -528,16 +529,11 @@ def get_dify_status() -> Dict[str, Any]:
             driver.get(status_url)
             # Wait for the page to load
             wait = WebDriverWait(driver, 15)
-            
-            # Wait for the main app-root element to be present first
-            wait.until(EC.presence_of_element_located((By.TAG_NAME, "app-root")))
-            logger.info("Dify: Found app-root element, now looking for expandable elements")
-            
+
             # Try to find and click expandable elements to reveal the status
             try:
                 # Look for clickable elements that might expand the status section
                 expandable_selectors = [
-                    "app-root",
                     "div[class*='page-status']",
                     "div[class*='status-none']"
                 ]
@@ -580,7 +576,7 @@ def get_dify_status() -> Dict[str, Any]:
                     
                     key_phrase = "all systems operational"
                     if key_phrase in text_content:
-                        logger.info(f"Dify: Found required key phrase {key_phrase} to indicate no issue")
+                        logger.info(f"Dify: Found required key phrase: {key_phrase} to indicate no issue")
                         is_operational = True
                         break
                 
@@ -754,7 +750,7 @@ def get_gemini_status() -> Dict[str, Any]:
 
                     key_phrase = "all systems operational"
                     if key_phrase in text_content:
-                        logger.info(f"Gemini: Found required key phrase {key_phrase} to indicate no issue")
+                        logger.info(f"Gemini: Found required key phrase: {key_phrase} to indicate no issue")
                         is_operational = True
                     else:
                         logger.info("Gemini: No required key phrase found - status is Disrupted")
@@ -763,13 +759,13 @@ def get_gemini_status() -> Dict[str, Any]:
                     "name": name,
                     "status": "Operational" if is_operational else "Disrupted",
                     "status_url": status_url,
-                        "issue_link": "Refer to status page as no specific link is available"
-                    }
+                    "issue_link": "Refer to status page as no specific link is available"
+                }
             except Exception as e:
                 logger.warning(f"status-large operational element not found after expansion: {e}")
     
-        except Exception as e:
-            logger.error(f"Error fetching Gemini status: {e}")
+    except Exception as e:
+        logger.error(f"Error fetching Gemini status: {e}")
     
     return {
         "name": name,
@@ -1173,7 +1169,7 @@ def get_alicloud_status() -> Dict[str, Any]:
                 
                 key_phrase = "no incident, everything is normal"
                 if key_phrase in text_content:
-                    logger.info(f"Alibaba Cloud: Found required key phrase {key_phrase} to indicate no issue")
+                    logger.info(f"Alibaba Cloud: Found required key phrase: {key_phrase} to indicate no issue")
                     is_operational = True
                 else:
                     logger.info("Alibaba Cloud: No required key phrase found - status is Disrupted")
