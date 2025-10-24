@@ -309,8 +309,8 @@ requires-dist = [
     { name = "selenium", specifier = ">=4.15.0" },
     { name = "setuptools", specifier = "==80.9.0" },
     { name = "streamlit", specifier = ">=1.28.0" },
-    { name = "undetected-chromedriver", specifier = ">=3.5.0" },
-    { name = "webdriver-manager", specifier = ">=4.0.0" },
+    { name = "undetected-chromedriver", specifier = "==3.5.5" },
+    { name = "webdriver-manager", specifier = "==4.0.2" },
 ]
 
 [[package]]
