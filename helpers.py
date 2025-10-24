@@ -202,6 +202,7 @@ def get_chrome_version()-> Union[int, None]:
             ['google-chrome-stable', '--version'],
             ['chromium', '--version'],
             ['chromium-browser', '--version'],
+            ['/usr/bin/chromium', '--version'],  # Streamlit Cloud path
             ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '--version'],  # macOS
             ['chrome', '--version'],
         ]
@@ -530,9 +531,13 @@ def get_dify_status() -> Dict[str, Any]:
                     options.add_argument("--disable-images")
                     options.add_argument("--disable-javascript")
                     
+                    # Get ChromeDriver (download only if not found)
                     driver_manager = ChromeDriverManager()
+                    driver_path = driver_manager.install()
+                    logger.info(f"ChromeDriver available at: {driver_path}")
+                    
                     _chrome_driver_dify = webdriver.Chrome(
-                        service=Service(driver_manager.install()), 
+                        service=Service(driver_path), 
                         options=options
                     )
                     logger.info("Successfully created ChromeDriverManager instance for Dify")
@@ -697,9 +702,13 @@ def get_gemini_status() -> Dict[str, Any]:
                     options.add_argument("--disable-images")
                     options.add_argument("--disable-javascript")
                     
+                    # Get ChromeDriver (download only if not found)
                     driver_manager = ChromeDriverManager()
+                    driver_path = driver_manager.install()
+                    logger.info(f"ChromeDriver available at: {driver_path}")
+                    
                     _chrome_driver_gemini = webdriver.Chrome(
-                        service=Service(driver_manager.install()), 
+                        service=Service(driver_path), 
                         options=options
                     )
                     logger.info("Successfully created ChromeDriverManager instance for Gemini")
@@ -1123,11 +1132,25 @@ def get_alicloud_status() -> Dict[str, Any]:
                     options.add_argument("--disable-images")
                     options.add_argument("--disable-javascript")
                     
-                    driver_manager = ChromeDriverManager()
-                    _chrome_driver_alicloud = webdriver.Chrome(
-                        service=Service(driver_manager.install()), 
-                        options=options
-                    )
+                    # Try to get ChromeDriver (download only if not found)
+                    try:
+                        # Check if driver already exists, download only if needed
+                        driver_manager = ChromeDriverManager()
+                        driver_path = driver_manager.install()
+                        logger.info(f"ChromeDriver available at: {driver_path}")
+                        
+                        # Add additional Chrome options for compatibility
+                        options.add_argument("--no-sandbox")
+                        options.add_argument("--disable-dev-shm-usage")
+                        options.add_argument("--remote-debugging-port=9222")
+                        
+                        _chrome_driver_alicloud = webdriver.Chrome(
+                            service=Service(driver_path), 
+                            options=options
+                        )
+                    except Exception as driver_error:
+                        logger.error(f"ChromeDriverManager failed: {driver_error}")
+                        raise driver_error
                     logger.info("Successfully created ChromeDriverManager instance for Alibaba Cloud")
                 except Exception as cm_error:
                     logger.error(f"ChromeDriverManager also failed for Alibaba Cloud: {cm_error}")

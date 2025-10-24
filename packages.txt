@@ -1,2 +1,3 @@
 chromium
 python3-distutils
+chromium-driver
