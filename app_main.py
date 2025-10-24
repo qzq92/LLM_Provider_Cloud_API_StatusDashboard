@@ -11,7 +11,8 @@ from datetime import datetime
 import streamlit as st
 from helpers import (
     get_openai_status, get_deepseek_status, get_gemini_status, get_anthropic_status,
-    get_aws_status, get_gcp_status, get_azure_status, get_perplexity_status, get_langsmith_status
+    get_aws_status, get_gcp_status, get_azure_status, get_alicloud_status, get_perplexity_status, 
+    get_langsmith_status, get_llamaindex_status, cleanup_resources
 )
 
 # Initialize session state for caching
@@ -147,9 +148,11 @@ async def fetch_all_statuses():
             get_anthropic_status(),
             get_perplexity_status(),
             get_langsmith_status(),
+            get_llamaindex_status(),
             get_aws_status(),
             get_gcp_status(),
             get_azure_status(),
+            asyncio.to_thread(get_alicloud_status),  # Run sync function in thread
             return_exceptions=True  # Don't fail if one service fails
         )
         
@@ -158,10 +161,13 @@ async def fetch_all_statuses():
         status_text.text("✅ All status checks completed!")
         
         # Convert results to dictionary format
-        service_names = ['openai', 'deepseek', 'gemini', 'anthropic', 'perplexity', 'langsmith', 'aws', 'gcp', 'azure']
+        service_names = [
+            'openai', 'deepseek', 'gemini', 'anthropic', 'perplexity', 
+            'langsmith', 'llamaindex', 'aws', 'gcp', 'azure', 'alicloud'
+        ]
         status_results = {}
         
-        for i, (service_name, result) in enumerate(zip(service_names, results)):
+        for _, (service_name, result) in enumerate(zip(service_names, results)):
             if isinstance(result, Exception):
                 logger.error(f"Error fetching {service_name} status: {result}")
                 status_results[service_name] = {
@@ -250,9 +256,11 @@ def main():
     anthropic_data = all_statuses['anthropic']
     perplexity_data = all_statuses['perplexity']
     langsmith_data = all_statuses['langsmith']
+    llamaindex_data = all_statuses['llamaindex']
     aws_data = all_statuses['aws']
     gcp_data = all_statuses['gcp']
     azure_data = all_statuses['azure']
+    alicloud_data = all_statuses['alicloud']
             
 
     # LLM API Status Section
@@ -277,21 +285,25 @@ def main():
     with col5:
         st.markdown(create_status_card(perplexity_data), unsafe_allow_html=True)
 
-    # LangSmith API Status Section
-    st.header("🔧 LangSmith API Status")
-    st.markdown("Monitoring LangSmith API availability for LLM observability and tracing")
+    # LangSmith & LlamaIndex API Status Section
+    st.header("🔧 LangSmith & LlamaIndex API Status")
+    st.markdown("Monitoring LangSmith and LlamaIndex API availability for LLM observability and tracing")
 
-    # Create column for LangSmith
-    col_langsmith = st.columns(1)[0]
+    # Create columns for LangSmith and LlamaIndex
+    col_langsmith, col_llamaindex = st.columns(2)
+    
     with col_langsmith:
         st.markdown(create_status_card(langsmith_data), unsafe_allow_html=True)
+    
+    with col_llamaindex:
+        st.markdown(create_status_card(llamaindex_data), unsafe_allow_html=True)
 
     # Cloud Services Status Section
     st.header("☁️ Selected Cloud Services Status")
-    st.markdown("Note: Due to large number of service offered, it is not possible to provide a link to actual cause. Please refer to respsective status page for more details.")
+    st.markdown("Note: Due to large number of service offered, it is not possible to provide a link to actual cause. Please refer to respective status page for more details.")
 
     # Create columns for Cloud Services
-    col6, col7, col8 = st.columns(3)
+    col6, col7, col8, col9 = st.columns(4)
 
     with col6:
         st.markdown(create_status_card(aws_data, include_details=False), unsafe_allow_html=True)
@@ -302,13 +314,16 @@ def main():
     with col8:
         st.markdown(create_status_card(azure_data, include_details=False), unsafe_allow_html=True)
 
+    with col9:
+        st.markdown(create_status_card(alicloud_data, include_details=False), unsafe_allow_html=True)
+
     # Summary metrics
     st.header("📈 Summary")
 
     # Calculate summary metrics
     llm_services = [openai_data, deepseek_data, gemini_data, anthropic_data, perplexity_data]
-    langsmith_services = [langsmith_data]
-    cloud_services = [aws_data, gcp_data, azure_data]
+    langsmith_services = [langsmith_data, llamaindex_data]
+    cloud_services = [aws_data, gcp_data, azure_data, alicloud_data]
 
     llm_operational = sum(1 for service in llm_services if service["status"] == "Operational")
     langsmith_operational = sum(1 for service in langsmith_services if service["status"] == "Operational")
@@ -327,7 +342,7 @@ def main():
     with col10:
         langsmith_percentage = langsmith_operational/len(langsmith_services)*100
         st.metric(
-            label="LangSmith API Operational",
+            label="LangSmith & LlamaIndex API Operational",
             value=f"{langsmith_operational}/{len(langsmith_services)}",
             delta=f"{langsmith_percentage:.1f}%"
         )
@@ -389,6 +404,8 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         logger.info("Received KeyboardInterrupt, shutting down gracefully...")
+        cleanup_resources()
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
+        cleanup_resources()
         raise
