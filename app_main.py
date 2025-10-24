@@ -204,7 +204,7 @@ def main():
     """Main function to run the Streamlit dashboard."""
     logger.info("Starting Dashboard")
     
-    st.title("📊 LLM APIs & Cloud Services Status Dashboard (refresh every 5minutes)")
+    st.title("📊 LLM APIs & Cloud Services Status Dashboard (refresh every 5 minutes)")
 
     # Get current time for display
     gmt_plus_8_timezone = pytz.timezone('Asia/Singapore')
