@@ -12,7 +12,7 @@ import streamlit as st
 from helpers import (
     get_openai_status, get_deepseek_status, get_gemini_status, get_anthropic_status,
     get_aws_status, get_gcp_status, get_azure_status, get_alicloud_status, get_perplexity_status, 
-    get_langsmith_status, get_llamaindex_status, cleanup_resources
+    get_langsmith_status, get_llamaindex_status, get_dify_status, cleanup_resources
 )
 
 # Initialize session state for caching
@@ -149,6 +149,7 @@ async def fetch_all_statuses():
             get_perplexity_status(),
             get_langsmith_status(),
             get_llamaindex_status(),
+            asyncio.to_thread(get_dify_status),  # Run sync function in thread
             get_aws_status(),
             get_gcp_status(),
             get_azure_status(),
@@ -163,7 +164,7 @@ async def fetch_all_statuses():
         # Convert results to dictionary format
         service_names = [
             'openai', 'deepseek', 'gemini', 'anthropic', 'perplexity', 
-            'langsmith', 'llamaindex', 'aws', 'gcp', 'azure', 'alicloud'
+            'langsmith', 'llamaindex', 'dify', 'aws', 'gcp', 'azure', 'alicloud'
         ]
         status_results = {}
         
@@ -257,6 +258,7 @@ def main():
     perplexity_data = all_statuses['perplexity']
     langsmith_data = all_statuses['langsmith']
     llamaindex_data = all_statuses['llamaindex']
+    dify_data = all_statuses['dify']
     aws_data = all_statuses['aws']
     gcp_data = all_statuses['gcp']
     azure_data = all_statuses['azure']
@@ -285,18 +287,21 @@ def main():
     with col5:
         st.markdown(create_status_card(perplexity_data), unsafe_allow_html=True)
 
-    # LangSmith & LlamaIndex API Status Section
-    st.header("🔧 LangSmith & LlamaIndex API Status")
-    st.markdown("Monitoring LangSmith and LlamaIndex API availability for LLM observability and tracing")
+    # LangSmith, LlamaIndex & Dify API Status Section
+    st.header("🔧 Other LLM related platforms API status")
+    st.markdown("Monitoring LangSmith, LlamaIndex and Dify API availability for LLM observability and tracing")
 
-    # Create columns for LangSmith and LlamaIndex
-    col_langsmith, col_llamaindex = st.columns(2)
+    # Create columns for LangSmith, LlamaIndex and Dify
+    col_langsmith, col_llamaindex, col_dify = st.columns(3)
     
     with col_langsmith:
         st.markdown(create_status_card(langsmith_data), unsafe_allow_html=True)
     
     with col_llamaindex:
         st.markdown(create_status_card(llamaindex_data), unsafe_allow_html=True)
+    
+    with col_dify:
+        st.markdown(create_status_card(dify_data), unsafe_allow_html=True)
 
     # Cloud Services Status Section
     st.header("☁️ Selected Cloud Services Status")
@@ -322,7 +327,7 @@ def main():
 
     # Calculate summary metrics
     llm_services = [openai_data, deepseek_data, gemini_data, anthropic_data, perplexity_data]
-    langsmith_services = [langsmith_data, llamaindex_data]
+    langsmith_services = [langsmith_data, llamaindex_data, dify_data]
     cloud_services = [aws_data, gcp_data, azure_data, alicloud_data]
 
     llm_operational = sum(1 for service in llm_services if service["status"] == "Operational")
@@ -342,7 +347,7 @@ def main():
     with col10:
         langsmith_percentage = langsmith_operational/len(langsmith_services)*100
         st.metric(
-            label="LangSmith & LlamaIndex API Operational",
+            label="Other LLM related platforms API status",
             value=f"{langsmith_operational}/{len(langsmith_services)}",
             delta=f"{langsmith_percentage:.1f}%"
         )

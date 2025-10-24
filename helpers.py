@@ -31,6 +31,7 @@ sg_tz = pytz.timezone('Singapore')
 # Global ChromeDriver instances to prevent multiple creations
 _chrome_driver_gemini = None
 _chrome_driver_alicloud = None
+_chrome_driver_dify = None
 
 # Global session for HTTP requests to avoid connection pool issues
 _http_session = None
@@ -68,7 +69,7 @@ def get_http_session():
 
 def cleanup_resources():
     """Clean up global resources to prevent connection pool issues."""
-    global _chrome_driver_gemini, _chrome_driver_alicloud, _http_session
+    global _chrome_driver_gemini, _chrome_driver_alicloud, _chrome_driver_dify, _http_session
     
     # Clean up Gemini Chrome driver
     if _chrome_driver_gemini is not None:
@@ -89,6 +90,16 @@ def cleanup_resources():
             logger.warning(f"Error cleaning up Alibaba Cloud Chrome driver: {e}")
         finally:
             _chrome_driver_alicloud = None
+    
+    # Clean up Dify Chrome driver
+    if _chrome_driver_dify is not None:
+        try:
+            _chrome_driver_dify.quit()
+            logger.info("Cleaned up Dify Chrome driver")
+        except Exception as e:
+            logger.warning(f"Error cleaning up Dify Chrome driver: {e}")
+        finally:
+            _chrome_driver_dify = None
     
     # Clean up HTTP session
     if _http_session is not None:
@@ -385,7 +396,7 @@ async def get_llamaindex_status() -> Dict[str, Any]:
         Dict containing status information
     """
     name = "LlamaIndex"
-    status_url = 'https://llamaindex.statuspage.io/'
+        status_url = 'https://llamaindex.statuspage.io/'
     try:
         # Use session to fetch the status page
         session = get_http_session()
@@ -423,6 +434,179 @@ async def get_llamaindex_status() -> Dict[str, Any]:
         "status_url": status_url,
         "issue_link": "Refer to status page as no specific link is available"
     }
+
+
+# Dify status
+def get_dify_status() -> Dict[str, Any]:
+    """
+    Get Dify API status using Chrome driver.
+    
+    Operational Status Logic:
+    - Uses Chrome driver to fetch the Dify status page
+    - Waits for app-root element to load, then searches for expandable elements
+    - Clicks on expandable elements to reveal hidden content
+    - Searches for <div class="page-status status-none"> elements
+    - Checks if any h2 contains "all systems operational"
+    - If found: Status = "Operational"
+    - If not found: Status = "Disrupted"
+    - If Chrome driver fails or element not found: Status = "Unknown"
+    
+    Returns:
+        Dict containing status information
+    """
+    name = "Dify.AI API Status"
+    status_url = 'https://dify.statuspage.io/'
+    
+    # Use dedicated Dify Chrome driver instance to prevent interference
+    global _chrome_driver_dify
+    driver = None
+    
+    try:
+        # Check if we already have a Dify driver instance
+        if _chrome_driver_dify is not None:
+            try:
+                # Test if the existing driver is still functional
+                _chrome_driver_dify.current_url
+                driver = _chrome_driver_dify
+                logger.info("Reusing existing Dify Chrome driver instance")
+            except Exception:
+                # Driver is no longer functional, create a new one
+                logger.info("Existing Dify driver is no longer functional, creating new one")
+                _chrome_driver_dify = None
+        
+        if _chrome_driver_dify is None:
+            logger.info("Creating new Chrome driver for Dify status")
+            
+            chrome_options = Options()
+            chrome_options.add_argument("--headless")
+            chrome_options.add_argument("--no-sandbox")
+            chrome_options.add_argument("--disable-dev-shm-usage")
+            chrome_options.add_argument("--disable-gpu")
+            chrome_options.add_argument("--disable-extensions")
+            chrome_options.add_argument("--disable-plugins")
+            chrome_options.add_argument("--disable-images")
+            chrome_options.add_argument("--disable-javascript")
+            
+            # Try undetected_chromedriver first (more reliable)
+            try:
+                logger.info("Attempting to use undetected_chromedriver for Dify")
+                _chrome_driver_dify = uc.Chrome(
+                    options=chrome_options, 
+                    use_subprocess=True
+                )
+                logger.info("Successfully created undetected_chromedriver instance for Dify")
+            except Exception as uc_error:
+                logger.warning(f"undetected_chromedriver failed for Dify: {uc_error}")
+                logger.info("Falling back to ChromeDriverManager for Dify")
+                try:
+                    # Fallback to ChromeDriverManager
+                    options = webdriver.ChromeOptions()
+                    options.add_argument('--headless')
+                    options.add_argument("--disable-gpu")
+                    options.add_argument("--disable-dev-shm-usage")
+                    options.add_argument("--disable-extensions")
+                    options.add_argument("--disable-plugins")
+                    options.add_argument("--disable-images")
+                    options.add_argument("--disable-javascript")
+                    
+                    driver_manager = ChromeDriverManager()
+                    _chrome_driver_dify = webdriver.Chrome(
+                        service=Service(driver_manager.install()), 
+                        options=options
+                    )
+                    logger.info("Successfully created ChromeDriverManager instance for Dify")
+                except Exception as cm_error:
+                    logger.error(f"ChromeDriverManager also failed for Dify: {cm_error}")
+                    logger.warning("All Chrome methods failed for Dify")
+                    _chrome_driver_dify = None
+        
+        driver = _chrome_driver_dify
+        
+        if driver is not None:
+            logger.info("Using Chrome driver for Dify status")
+            # Navigate to the status page
+            driver.get(status_url)
+            # Wait for the page to load
+            wait = WebDriverWait(driver, 15)
+            
+            # Wait for the main app-root element to be present first
+            wait.until(EC.presence_of_element_located((By.TAG_NAME, "app-root")))
+            logger.info("Dify: Found app-root element, now looking for expandable elements")
+            
+            # Try to find and click expandable elements to reveal the status
+            try:
+                # Look for clickable elements that might expand the status section
+                expandable_selectors = [
+                    "app-root",
+                    "div[class*='page-status']",
+                    "div[class*='status-none']"
+                ]
+                
+                for selector in expandable_selectors:
+                    try:
+                        elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                        for element in elements:
+                            if element.is_displayed() and element.is_enabled():
+                                logger.info(f"Dify: Found expandable element: {selector}")
+                                driver.execute_script("arguments[0].click();", element)
+                                time.sleep(1)  # Wait for expansion
+                                break
+                    except Exception as e:
+                        logger.debug(f"Selector {selector} not found or clickable: {e}")
+                        continue
+                
+                # Additional wait for content to expand after clicking
+                time.sleep(1)
+                
+            except Exception as e:
+                logger.warning(f"Could not find expandable elements: {e}")
+            
+            # Check for page-status status-none elements and h2 text
+            try:
+                # Wait for the specific status element to be present
+                wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.page-status.status-none")))
+                logger.info("Found page-status status-none element after expansion")
+                
+                # Get the element and find h2 elements
+                status_element = driver.find_element(By.CSS_SELECTOR, "div.page-status.status-none")
+                h2_elements = status_element.find_elements(By.TAG_NAME, "h2")
+                
+                is_operational = False
+                
+                # Check h2 elements for the text content
+                for h2 in h2_elements:
+                    text_content = h2.text.strip().lower()
+                    logger.info(f"Dify status text content from h2: {text_content}")
+                    
+                    key_phrase = "all systems operational"
+                    if key_phrase in text_content:
+                        logger.info(f"Dify: Found required key phrase {key_phrase} to indicate no issue")
+                        is_operational = True
+                        break
+                
+                if not is_operational:
+                    logger.info("Dify: No required key phrase found - status is Disrupted")
+                
+                return {
+                    "name": name,
+                    "status": "Operational" if is_operational else "Disrupted",
+                    "status_url": status_url,
+                    "issue_link": "Refer to status page as no specific link is available"
+                }
+                
+            except Exception as e:
+                logger.warning(f"page-status status-none element not found after expansion: {e}")
+    
+    except Exception as e:
+        logger.error(f"Error fetching Dify status: {e}")
+    
+    return {
+        "name": name,
+        "status": "Unknown",
+        "status_url": status_url,
+        "issue_link": "Refer to status page as no specific link is available"
+    }
+
 def get_gemini_status() -> Dict[str, Any]:
     """
     Get Google Gemini API status using Chrome driver.
@@ -584,9 +768,9 @@ def get_gemini_status() -> Dict[str, Any]:
             except Exception as e:
                 logger.warning(f"status-large operational element not found after expansion: {e}")
     
-    except Exception as e:
-        logger.error(f"Error fetching Gemini status: {e}")
-
+        except Exception as e:
+            logger.error(f"Error fetching Gemini status: {e}")
+    
     return {
         "name": name,
         "status": "Unknown",

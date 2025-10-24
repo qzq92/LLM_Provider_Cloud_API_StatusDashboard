@@ -4,8 +4,8 @@ A 1 min refresh real-time Streamlit dashboard for monitoring LLM API and cloud s
 
 ## Features
 
-- **LLM API Monitoring**: OpenAI, DeepSeek, Gemini, Anthropic, Perplexity, and LangSmith
-- **Cloud Services Monitoring**: AWS, Google Cloud Platform, and Microsoft Azure
+- **LLM API Monitoring**: OpenAI, DeepSeek, Gemini, Anthropic, Perplexity, LangSmith, LlamaIndex, and Dify
+- **Cloud Services Monitoring**: AWS, Google Cloud Platform, Microsoft Azure, and Alibaba Cloud
 - **Async Status Loading**: Non-blocking concurrent status checks using asyncio
 - **Auto-refresh**: Every 60 seconds
 - **Visual Status Indicators**: Color-coded status cards with source links
@@ -18,8 +18,8 @@ You need to have a python virtual env or Anaconda or Miniconda setup in order to
 
 ## Browser Requirements
 
-### Chrome Browser (Required for Gemini)
-The dashboard uses Chrome browser for scraping Google AI Studio status page. Chrome is required for Gemini status monitoring.
+### Chrome Browser (Required for Gemini, Alibaba Cloud, and Dify)
+The dashboard uses Chrome browser for scraping Google AI Studio, Alibaba Cloud, and Dify status pages. Chrome is required for Gemini, Alibaba Cloud, and Dify status monitoring.
 
 **Note**: The dashboard uses a singleton Chrome driver pattern to ensure only one browser instance runs at a time, even with async operations.
 
@@ -106,6 +106,88 @@ Each status card includes:
 - **Issue Details**: Additional information for disrupted services
 - **Issue Links**: Direct links to incident reports (when available)
 
+## Operational Status Logic
+
+The dashboard determines service status using specific logic for each service:
+
+### LLM API Services
+
+**OpenAI API**
+- Fetches latest entry from OpenAI's RSS feed
+- Checks if description contains "all impacted services have now fully recovered"
+- Status: Operational if found, Disrupted if not found
+
+**DeepSeek API**
+- Fetches latest entry from DeepSeek's Atom feed
+- Checks if content contains "resolved"
+- Status: Operational if found, Disrupted if not found
+
+**Google Gemini API**
+- Uses Chrome driver to fetch Gemini status page (dynamic content)
+- Waits for app-root element to load, then searches for expandable elements
+- Clicks on expandable elements to reveal hidden content
+- Searches for `<div class="status-large operational">` elements
+- Checks if any span contains "all systems operational"
+- Status: Operational if found, Disrupted if not found
+
+**Anthropic API**
+- Fetches latest entry from Anthropic's RSS feed
+- Checks if description contains "resolved"
+- Status: Operational if found, Disrupted if not found
+
+**Perplexity API**
+- Fetches latest entry from Perplexity's RSS feed
+- Checks if description contains "resolved" AND does not contain "api outage"
+- Status: Operational if both conditions met, Disrupted otherwise
+
+**LangSmith API**
+- Fetches latest entry from LangSmith's RSS feed
+- Checks if description contains "resolved"
+- Status: Operational if found, Disrupted if not found
+
+**LlamaIndex API**
+- Fetches LlamaIndex status page HTML content
+- Searches for `<p class="color-secondary">` elements
+- Checks if any element contains "no incidents reported today"
+- Status: Operational if found, Disrupted if not found
+
+**Dify API**
+- Uses Chrome driver to fetch Dify status page (dynamic content)
+- Waits for app-root element to load, then searches for expandable elements
+- Clicks on expandable elements to reveal hidden content
+- Searches for `<div class="page-status status-none">` elements
+- Checks if any h2 contains "all systems operational"
+- Status: Operational if found, Disrupted if not found
+
+### Cloud Services
+
+**AWS (Amazon Web Services)**
+- Fetches entries from AWS RSS feed
+- If feed entries exist: Status = "Disrupted" (ongoing issues)
+- If no feed entries: Status = "Operational" (no incidents)
+
+**Google Cloud Platform (GCP)**
+- Fetches latest entry from GCP's Atom feed
+- Checks if title contains "resolved:"
+- Status: Operational if found, Disrupted if not found
+
+**Microsoft Azure**
+- Fetches entries from Azure's RSS feed
+- If feed entries exist: Status = "Disrupted" (ongoing issues)
+- If no feed entries: Status = "Operational" (no incidents)
+
+**Alibaba Cloud**
+- Uses Chrome driver to fetch Alibaba Cloud status page (dynamic content)
+- Waits for main container to load, then searches for expandable elements
+- Clicks on expandable elements (buttons, toggles) to reveal hidden content
+- Searches for `<div class="cms-title-noEvent-child">` elements after expansion
+- Status: Operational if found (no incidents), Disrupted if not found
+
+### Error Handling
+- If any service's data source is inaccessible or parsing fails: Status = "Unknown"
+- Individual service failures don't affect other services
+- All status checks run concurrently for optimal performance
+
 ## Technical Architecture
 
 ### Async Status Loading
@@ -171,7 +253,7 @@ make shell         # Activate uv shell
 
 - The dashboard uses RSS feeds and status pages to determine service availability
 - Some services may show "Unknown" status if their status pages are not accessible or layout has changed
-- Chrome browser is required for Gemini status monitoring
+- Chrome browser is required for Gemini, Alibaba Cloud, and Dify status monitoring
 - The dashboard uses async operations for better performance and user experience
 - All status checks run concurrently for faster loading times
 - Simple and clean user interface with essential functionality
