@@ -42,19 +42,19 @@ def get_http_session():
     if _http_session is None:
         _http_session = requests.Session()
         
-        # Configure retry strategy
+        # Configure retry strategy with reduced attempts
         retry_strategy = Retry(
-            total=3,
-            backoff_factor=1,
-            status_forcelist=[429, 500, 502, 503, 504],
+            total=2,              # Reduced: Only 2 retry attempts
+            backoff_factor=0.5,   # Reduced: Shorter backoff time
+            status_forcelist=[500, 502, 503, 504],  # Removed 429 to avoid rate limiting
         )
         
-        # Configure adapter with retry strategy
+        # Configure adapter with retry strategy and reduced connection pool
         adapter = HTTPAdapter(
             max_retries=retry_strategy,
-            pool_connections=10,  # Number of connection pools
-            pool_maxsize=20,     # Maximum number of connections in pool
-            pool_block=False     # Don't block when pool is full
+            pool_connections=2,   # Reduced: Number of connection pools
+            pool_maxsize=5,       # Reduced: Maximum number of connections in pool
+            pool_block=False      # Don't block when pool is full
         )
         
         _http_session.mount("http://", adapter)
@@ -63,9 +63,24 @@ def get_http_session():
         # Set timeout for all requests
         _http_session.timeout = 10
         
-        logger.info("Created new HTTP session with connection pooling")
+        # Add connection limits to prevent resource exhaustion
+        _http_session.headers.update({
+            'Connection': 'keep-alive',
+            'Keep-Alive': 'timeout=5, max=10'
+        })
+        
+        logger.info("Created new HTTP session with optimized connection pooling")
     
     return _http_session
+
+def get_lightweight_session():
+    """Get a lightweight HTTP session for individual requests to avoid connection pool issues."""
+    session = requests.Session()
+    session.timeout = 10
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    })
+    return session
 
 def cleanup_resources():
     """Clean up global resources to prevent connection pool issues."""
@@ -101,11 +116,15 @@ def cleanup_resources():
         finally:
             _chrome_driver_dify = None
     
-    # Clean up HTTP session
+    # Clean up HTTP session with aggressive connection cleanup
     if _http_session is not None:
         try:
+            # Close all connections in the pool
             _http_session.close()
-            logger.info("Cleaned up HTTP session")
+            # Force garbage collection of connections
+            import gc
+            gc.collect()
+            logger.info("Cleaned up HTTP session and connections")
         except Exception as e:
             logger.warning(f"Error cleaning up HTTP session: {e}")
         finally:
@@ -227,9 +246,10 @@ async def get_openai_status() -> Dict[str, Any]:
     try:
         rss_url = 'https://status.openai.com/feed.rss'
         status_url = 'https://status.openai.com'
-        session = get_http_session()
+        session = get_lightweight_session()
         response = session.get(rss_url)
         feed = feedparser.parse(response.content)
+        session.close()  # Close immediately after use
         
         if feed.entries:
             latest_entry = feed.entries[0]
