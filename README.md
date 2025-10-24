@@ -1,16 +1,15 @@
 # LLM & Cloud API Status Dashboard
 
-A 1 min refresh real-time Streamlit dashboard for monitoring LLM API and cloud service statuses with advanced async loading and graceful shutdown capabilities.
+A real-time Streamlit dashboard for monitoring LLM API and cloud service statuses with automatic 60-second refresh, async loading, and graceful shutdown capabilities.
 
 ## Features
 
 - **LLM API Monitoring**: OpenAI, DeepSeek, Gemini, Anthropic, Perplexity, LangSmith, LlamaIndex, and Dify
 - **Cloud Services Monitoring**: AWS, Google Cloud Platform, Microsoft Azure, and Alibaba Cloud
 - **Async Status Loading**: Non-blocking concurrent status checks using asyncio
-- **Auto-refresh**: Every 60 seconds
+- **Auto-refresh**: Every 60 seconds with automatic page reload
 - **Visual Status Indicators**: Color-coded status cards with source links
-- **Summary Metrics**: Overall uptime percentages and service counts
-- **Simple Controls**: Clean UI with essential refresh functionality
+- **Clean Interface**: Minimalist design focusing on essential status information
 - **Chrome Integration**: Separate Chrome driver instances for Gemini, Alibaba Cloud, and Dify status scraping
 - **Dynamic Content Handling**: Advanced web scraping for services with dynamic content loading
 - **Connection Pool Management**: Efficient HTTP connection pooling to prevent connection issues
@@ -23,9 +22,9 @@ The dashboard provides a comprehensive view of all monitored services with real-
 
 **Dashboard Features:**
 - **Real-time Status Cards**: Color-coded cards showing operational status for each service
-- **Auto-refresh Timer**: Automatic updates every 60 seconds with countdown display
-- **Summary Metrics**: Overall operational percentages for each service category
-- **Responsive Layout**: Clean, organized interface that works on different screen sizes
+- **Auto-refresh**: Automatic updates every 60 seconds with silent background reload
+- **Minimalist Design**: Clean interface focusing on service status cards only
+- **Responsive Layout**: Organized interface with cards grouped by service type
 - **Status Indicators**: 
   - 🟢 Green: All systems operational
   - 🔴 Red: Service disruptions detected
@@ -91,15 +90,15 @@ streamlit run app_main.py
 The dashboard will automatically:
 - Fetch status information from various API endpoints using async operations
 - Display real-time status with color-coded indicators and source links
-- Show summary metrics for overall system health
-- Auto-refresh every 60 seconds
+- Auto-refresh every 60 seconds with silent page reload
 - Run all status checks concurrently for faster loading
+- Cache data between refresh cycles for improved performance
 
-### Dashboard Controls
+### Dashboard Information
 
-- **🔄 Refresh Now**: Manual refresh button
 - **⏰ Last Refresh**: Shows last update time in GMT+8
-- **⏳ Countdown**: Shows time until next auto-refresh
+- **Auto-refresh**: Page automatically reloads every 60 seconds
+- **No Manual Controls**: Dashboard operates in fully automated mode
 
 ### Stopping the Dashboard
 
