@@ -6,7 +6,7 @@ A real-time Streamlit dashboard for monitoring LLM API and cloud service statuse
 
 **[llm-api-cloud-provider-status.streamlit.app](https://llm-api-cloud-provider-status.streamlit.app)**
 
-The dashboard automatically refreshes every 60 seconds with real-time status updates.
+The dashboard automatically refreshes every 5 minute with real-time status updates.
 
 *packages.txt* contains necessary apt package for streamlit server to install the deprecated python packages in order for the app to work.
 
