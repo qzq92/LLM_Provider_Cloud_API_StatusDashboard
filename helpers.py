@@ -377,7 +377,7 @@ async def get_langsmith_status() -> Dict[str, Any]:
             description_lower = description.lower()
             #logger.info(f"Langsmith description: {description_lower}")
             # Set to false if any of the keyword exist in description
-            is_operational = "resolved" in description_lower
+            is_operational = "resolved" in description_lower or "complete" in description_lower
             return {
                 "name": name,
                 "status": "Operational" if is_operational else "Disrupted", 
