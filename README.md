@@ -135,4 +135,4 @@ make lint          # Run linting
 
 ## Disclaimer
 
-The operational status is based on keyword/phrase matching and pattern analysis. Changes in status page phrasing may lead to inaccurate status reports. This is a prototype project developed with AI assistance and is not meant to be optimal or secure.
+The operational status is based on keyword/phrase matching and pattern analysis by my own assumption. Any changes in link or assumed keywords/phrasing may lead to inaccurate status provided. This is a prototype project developed with AI assistance and is not meant to be optimal or secure. Feel free to expand or adopt parts of the logic for your use case.
