@@ -2,13 +2,15 @@
 
 A real-time Streamlit dashboard for monitoring LLM API and cloud service statuses with automatic 60-second refresh.
 
-## 🚀 Live Demo
+## 🚀 Live Demo on Streamlit
 
-**[llm-api-cloud-provider-status.streamlit.app](https://llm-api-cloud-provider-status.streamlit.app)**
+Due to large memory consumption, i have remove the application that was hosted on streamlit. 
 
-The dashboard automatically refreshes every 5 minute with real-time status updates.
+Note: *packages.txt* contains necessary apt package for streamlit server to install the deprecated python packages in order for the app to work.
 
-*packages.txt* contains necessary apt package for streamlit server to install the deprecated python packages in order for the app to work.
+## Sample page
+
+![Sample Dashboard](img/sample_dashboard.png)
 
 ## Features
 
@@ -17,6 +19,7 @@ The dashboard automatically refreshes every 5 minute with real-time status updat
 - **Auto-refresh**: Every 60 seconds with automatic page reload
 - **Visual Status Indicators**: Color-coded status cards with source links
 - **Chrome Integration**: Separate Chrome driver instances for dynamic content scraping
+- **5 minutes polling of status** for status update
 - **Resource Optimized**: Efficient connection pooling and cloud-ready deployment
 
 ## Status Indicators
