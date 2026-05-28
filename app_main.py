@@ -93,7 +93,7 @@ def create_status_card(service_data: dict, include_details=True) -> str:
         status_class = "status-unknown"
         # No operational key is available
         status_icon = "🟡"
-        logger.warning(f"Service {service_data['name']} is unknown")
+        logger.warning("Service %s is unknown", service_data["name"])
     elif service_data["status"] == "Operational":
         status_icon = "🟢"
         status_class = "status-operational"
@@ -169,7 +169,7 @@ async def fetch_all_statuses():
         
         for _, (service_name, result) in enumerate(zip(service_names, results)):
             if isinstance(result, Exception):
-                logger.error(f"Error fetching {service_name} status: {result}")
+                logger.error("Error fetching %s status: %s", service_name, result)
                 status_results[service_name] = {
                     "name": f"{service_name.title()} Status",
                     "status": "Unknown",
@@ -194,7 +194,7 @@ async def fetch_all_statuses():
         return status_results
         
     except Exception as e:
-        logger.error(f"Error in fetch_all_statuses: {e}")
+        logger.error("Error in fetch_all_statuses: %s", e)
         progress_bar.progress(1.0)
         status_text.text("❌ Error occurred during status checks")
         return {}
@@ -318,29 +318,6 @@ def main():
 
     with col9:
         st.markdown(create_status_card(alicloud_data, include_details=False), unsafe_allow_html=True)
-
-
-    # Performance metrics
-    # with st.expander("📊 Performance Metrics"):
-    #     col_perf1, col_perf2, col_perf3 = st.columns(3)
-        
-    #     with col_perf1:
-    #         st.metric("Loading Strategy", "Parallel")
-        
-    #     with col_perf2:
-    #         st.metric("Cache Status", "Enabled")
-        
-    #     with col_perf3:
-    #         st.metric("Parallel Workers", "9")
-
-    # # Debug information (collapsible)
-    # with st.expander("🔧 Debug Information"):
-    #     st.json({
-    #         "LLM Services": llm_services,
-    #         "LangSmith Services": langsmith_services,
-    #         "Cloud Services": cloud_services,
-    #         "Last Refresh in GMT+8": datetime.now(tz=gmt_plus_8_timezone).strftime('%d-%m-%Y %H:%M:%S')
-    #     })
 if __name__ == "__main__":
     try:
         main()
@@ -348,6 +325,6 @@ if __name__ == "__main__":
         logger.info("Received KeyboardInterrupt, shutting down gracefully...")
         cleanup_resources()
     except Exception as e:
-        logger.error(f"Unexpected error: {e}")
+        logger.error("Unexpected error: %s", e)
         cleanup_resources()
         raise
