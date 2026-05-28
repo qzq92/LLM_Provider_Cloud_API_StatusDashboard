@@ -1,6 +1,15 @@
 """
 Helper functions for fetching API and cloud service statuses.
 """
+import time
+import feedparser
+import undetected_chromedriver as uc
+import pytz
+import threading
+import subprocess
+import re
+import logging
+import requests
 from typing import Union, Dict, Any
 from datetime import datetime
 from bs4 import BeautifulSoup
@@ -11,18 +20,8 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
-import subprocess
-import re
-import logging
-import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-import feedparser
-import undetected_chromedriver as uc
-import pytz
-import time
-import asyncio
-import threading
 # Configure logging for helpers module
 logger = logging.getLogger(__name__)
 # Globals
@@ -136,7 +135,10 @@ def get_lightweight_session():
     session = requests.Session()
     session.timeout = 10
     session.headers.update({
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        'User-Agent': (
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+            '(KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        )
     })
     return session
 
@@ -790,7 +792,7 @@ def get_gemini_status() -> Dict[str, Any]:
             # Try to find and click expandable elements to reveal the status
             try:
                 # Look for clickable elements that might expand the status section
-                # Following the hierarchy: app-root > ms-status-page > div > div.status-page-container > div.status-large
+                # Hierarchy: app-root > ms-status-page > container > status-large
                 expandable_selectors = [
                     "app-root",
                     "ms-status-page",
@@ -1010,7 +1012,9 @@ async def get_gcp_status() -> Dict[str, Any]:
                 "name": name,
                 "status": "Operational" if is_operational else "Disrupted",
                 "status_url": status_url,
-                "issue_link": "Refer to status page as no specific link is available", # No specific issue link provided in the status page
+                "issue_link": (
+                    "Refer to status page as no specific link is available"
+                ),  # No specific issue link provided in the status page
             }
     except Exception as e:
         logger.error(f"Error fetching GCP status: {e}")
@@ -1050,7 +1054,9 @@ async def get_azure_status() -> Dict[str, Any]:
                 "name": name,
                 "status": "Disrupted",
                 "status_url": status_url,
-                "issue_link": "Refer to status page as no specific link is available", # No specific issue link provided in the status page
+                "issue_link": (
+                    "Refer to status page as no specific link is available"
+                ),  # No specific issue link provided in the status page
             }
         # No feed found, assume operational
         else:
@@ -1059,7 +1065,9 @@ async def get_azure_status() -> Dict[str, Any]:
                 "name": name,
                 "status": "Operational",
                 "status_url": status_url,
-                "issue_link": "Refer to status page as no specific link is available", # No specific issue link provided in the status page
+                "issue_link": (
+                    "Refer to status page as no specific link is available"
+                ),  # No specific issue link provided in the status page
             }
     except Exception as e:
         logger.error(f"Error fetching Azure status: {e}")
@@ -1099,7 +1107,9 @@ async def get_aws_status() -> Dict[str, Any]:
                 "name": name,
                 "status": "Disrupted",
                 "status_url": status_url,
-                "issue_link": "Refer to status page as no specific link is available", # No specific issue link provided in the status page
+                "issue_link": (
+                    "Refer to status page as no specific link is available"
+                ),  # No specific issue link provided in the status page
             }
         # No feed found, assume operational
         else:
@@ -1108,7 +1118,9 @@ async def get_aws_status() -> Dict[str, Any]:
                 "name": name,
                 "status": "Operational",
                 "status_url": status_url,
-                "issue_link": "Refer to status page as no specific link is available", # No specific issue link provided in the status page
+                "issue_link": (
+                    "Refer to status page as no specific link is available"
+                ),  # No specific issue link provided in the status page
             }
 
     except Exception as e:
