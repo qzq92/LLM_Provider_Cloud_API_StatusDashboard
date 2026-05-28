@@ -40,9 +40,13 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 2. Setup and run:
 ```bash
 uv sync
-# Windows (recommended if your network uses enterprise TLS certificates):
-uv sync --native-tls
 uv run streamlit run app_main.py
+```
+
+Windows (recommended for enterprise/network TLS interception):
+```powershell
+uv sync --native-tls
+uv run --native-tls streamlit run app_main.py
 ```
 
 ## Browser Requirements
