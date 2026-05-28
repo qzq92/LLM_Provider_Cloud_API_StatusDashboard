@@ -146,7 +146,7 @@ async def get_deepseek_status() -> Dict[str, Any]:
     
     Operational Status Logic:
     - Fetches the latest entry from DeepSeek's Atom feed
-    - Checks if the latest feed content contains "resolved"
+    - Checks if the latest feed content contains "resolved" or "restored"
     - If found: Status = "Operational"
     - If not found: Status = "Disrupted"
     - If feed parsing fails: Status = "Unknown"
@@ -162,16 +162,14 @@ async def get_deepseek_status() -> Dict[str, Any]:
         if feed.entries:
             latest_entry = feed.entries[0]
             issue_link = latest_entry.link
-            content = (
-                latest_entry.get("content", [{}])[0].get("value", "")
-                if latest_entry.get("content")
-                else ""
-            )
+            logger.info("DeepSeek latest entry: %s", latest_entry)
+            content = latest_entry.get("summary", "")
 
             # Check for operational issues
             content_lower = content.lower()
+            logger.info("DeepSeek content: %s", content_lower)
             # Look for specific keywords in the content
-            is_operational = "resolved" in content_lower
+            is_operational = "resolved" in content_lower or "restored" in content_lower
             return build_operational_payload(name, is_operational, status_url, issue_link)
     except FETCH_STATUS_ERRORS as e:
         logger.error("Error fetching DeepSeek status: %s", e)
@@ -201,11 +199,10 @@ async def get_langsmith_status() -> Dict[str, Any]:
             latest_entry = feed.entries[0]
             issue_link = latest_entry.link
             description = latest_entry.description
-
             # Check for operational issues
             description_lower = description.lower()
             # Set to false if any of the keyword exist in description
-            is_operational = "resolved" in description_lower or "complete" in description_lower
+            is_operational = "resolved" in description_lower
             return build_operational_payload(name, is_operational, status_url, issue_link)
     except FETCH_STATUS_ERRORS as e:
         logging.error("Error fetching LangSmith status: %s", e)
