@@ -4,14 +4,12 @@ Helper functions for fetching API and cloud service statuses.
 import time
 import feedparser
 import undetected_chromedriver as uc
-import pytz
 import threading
 import subprocess
 import re
 import logging
 import requests
 from typing import Union, Dict, Any
-from datetime import datetime
 from bs4 import BeautifulSoup
 from webdriver_manager.chrome import ChromeDriverManager
 from selenium import webdriver
@@ -24,10 +22,6 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 # Configure logging for helpers module
 logger = logging.getLogger(__name__)
-# Globals
-gmt_tz = pytz.timezone('GMT')
-sg_tz = pytz.timezone('Singapore')
-
 # Global ChromeDriver instances to prevent multiple creations
 _chrome_driver_gemini = None
 _chrome_driver_alicloud = None
@@ -190,64 +184,6 @@ def cleanup_resources():
         finally:
             _http_session = None
 
-# Chrome driver functions removed - using per-call synchronous approach
-
-def parse_feed_date(entry, fallback_timezone=None):
-    """
-    Parse date from RSS/Atom feed entry, handling different formats.
-    
-    Args:
-        entry: Feed entry object
-        fallback_timezone: Timezone to use if parsing fails
-    
-    Returns:
-        datetime object in Singapore timezone
-    """
-    if fallback_timezone is None:
-        fallback_timezone = sg_tz
-    
-    # Try different date fields and formats
-    date_fields = ['updated', 'published', 'pubDate']
-    date_formats = [
-        # ISO 8601 formats
-        "%Y-%m-%dT%H:%M:%S%z",
-        "%Y-%m-%dT%H:%M:%S.%f%z", 
-        "%Y-%m-%dT%H:%M:%SZ",
-        # RSS formats
-        "%a, %d %b %Y %H:%M:%S %Z",
-        "%a, %d %b %Y %H:%M:%S %z",
-        # Simple formats
-        "%Y-%m-%d %H:%M:%S"
-    ]
-    
-    for field in date_fields:
-        date_str = entry.get(field, '')
-        if not date_str:
-            continue
-            
-        # Handle Z suffix for UTC
-        if date_str.endswith('Z'):
-            date_str = date_str.replace('Z', '+00:00')
-        
-        for fmt in date_formats:
-            try:
-                if fmt.endswith('%z') or fmt.endswith('%Z'):
-                    # Format includes timezone
-                    parsed_time = datetime.strptime(date_str, fmt)
-                    if parsed_time.tzinfo is None:
-                        parsed_time = parsed_time.replace(tzinfo=gmt_tz)
-                else:
-                    # Format doesn't include timezone, assume GMT
-                    parsed_time = datetime.strptime(date_str, fmt).replace(tzinfo=gmt_tz)
-                
-                return parsed_time.astimezone(sg_tz)
-            except ValueError:
-                continue
-    
-    # If all parsing fails, return current time
-    logger.warning(f"Could not parse date from entry, using current time")
-    return datetime.now(tz=fallback_timezone)
-
 def get_chrome_version()-> Union[int, None]:
     """
     Detect the installed Chrome browser version.
@@ -311,11 +247,8 @@ async def get_openai_status() -> Dict[str, Any]:
         
         if feed.entries:
             latest_entry = feed.entries[0]
-            title = latest_entry.title
             issue_link = latest_entry.link
             description = latest_entry.description
-            # Use the new date parsing helper
-            published_time_sg = parse_feed_date(latest_entry)
             # Check for operational issues
             description_lower = description.lower()
 
@@ -326,9 +259,6 @@ async def get_openai_status() -> Dict[str, Any]:
                 "status": "Operational" if is_operational else "Disrupted",
                 "status_url": status_url,
                 "issue_link": issue_link,
-                # "last_update": published_time_sg,
-                # "title": title,
-                # "description": description[:200] + "..." if len(description) > 200 else description
             }
     except Exception as e:
         logger.error(f"Error fetching OpenAI status: {e}")
@@ -338,9 +268,6 @@ async def get_openai_status() -> Dict[str, Any]:
         "status": "Unknown",
         "status_url": status_url,
         "issue_link": "Refer to status page as no specific link is available"
-        # "last_update": "N/A",
-        # "title": "Error",
-        # "description": "Unable to fetch status"
     }
 
 async def get_deepseek_status() -> Dict[str, Any]:
@@ -365,12 +292,8 @@ async def get_deepseek_status() -> Dict[str, Any]:
         
         if feed.entries:
             latest_entry = feed.entries[0]
-            title = latest_entry.title
             issue_link = latest_entry.link
             content = latest_entry.get('content', [{}])[0].get('value', '') if latest_entry.get('content') else ''
-            updated_time_raw = latest_entry.get('updated')
-            # Extract updated time which is isoformat
-            updated_time = datetime.fromisoformat(updated_time_raw) # Already in Beijing time, which is same as GMT+8
             
             # Check for operational issues
             content_lower = content.lower()
@@ -383,9 +306,6 @@ async def get_deepseek_status() -> Dict[str, Any]:
                 "status": "Operational" if is_operational else "Disrupted",
                 "status_url": status_url,
                 "issue_link": issue_link,
-                # "last_update": updated_time,
-                # "title": title,
-                # "description": content[:200] + "..." if len(content) > 200 else content
             }
     except Exception as e:
         logger.error(f"Error fetching DeepSeek status: {e}")
@@ -395,9 +315,6 @@ async def get_deepseek_status() -> Dict[str, Any]:
         "status": "Unknown",
         "status_url": status_url,
         "issue_link": "Refer to status page as no specific link is available"
-        # "last_update": "N/A",
-        # "title": "Error",
-        # "description": "Unable to fetch status"
     }
 
 async def get_langsmith_status() -> Dict[str, Any]:
@@ -422,15 +339,11 @@ async def get_langsmith_status() -> Dict[str, Any]:
         
         if feed.entries:
             latest_entry = feed.entries[0]
-            title = latest_entry.title
             issue_link = latest_entry.link
             description = latest_entry.description
-            # Use the new date parsing helper
-            published_time_sg = parse_feed_date(latest_entry)
 
             # Check for operational issues
             description_lower = description.lower()
-            #logger.info(f"Langsmith description: {description_lower}")
             # Set to false if any of the keyword exist in description
             is_operational = "resolved" in description_lower or "complete" in description_lower
             return {
@@ -438,21 +351,15 @@ async def get_langsmith_status() -> Dict[str, Any]:
                 "status": "Operational" if is_operational else "Disrupted", 
                 "status_url": status_url,
                 "issue_link": issue_link,
-                #"last_update": published_time_sg,
-                # "title": title,
-                # "description": description[:200] + "..." if len(description) > 200 else description
             }
     except Exception as e:
-        logging.error(f"Error fetching LangSmith status: {e}")
+        logging.error("Error fetching LangSmith status: %s", e)
     
     return {
         "name": name,
         "status": "Unknown",
         "status_url": status_url,
         "issue_link": "Refer to status page as no specific link is available"
-        # "last_update": "N/A",
-        # "title": "Error",
-        # "description": "Unable to fetch status"
     }
 
 
@@ -497,7 +404,7 @@ async def get_llamaindex_status() -> Dict[str, Any]:
         }
 
     except Exception as e:
-        logging.error(f"Error fetching LlamaIndex status: {e}")
+        logging.error("Error fetching LlamaIndex status: %s", e)
     
     return {
         "name": name,
@@ -889,11 +796,8 @@ async def get_perplexity_status() -> Dict[str, Any]:
         
         if feed.entries:
             latest_entry = feed.entries[0]
-            title = latest_entry.title
             issue_link = latest_entry.link
             description = latest_entry.description
-            # Use the new date parsing helper
-            published_time_sg = parse_feed_date(latest_entry)
             # Check for operational issues
             description_lower = description.lower()
             is_operational = "resolved" in description_lower and not "api outage" in description_lower
@@ -903,9 +807,6 @@ async def get_perplexity_status() -> Dict[str, Any]:
                 "status": "Operational" if is_operational else "Disrupted",
                 "status_url": status_url,
                 "issue_link": issue_link,
-                # "last_update": published_time_sg,
-                # "title": title,
-                # "description": description[:200] + "..." if len(description) > 200 else description
             }
     except Exception as e:
         logger.error(f"Error fetching Perplexity status: {e}")
@@ -915,9 +816,6 @@ async def get_perplexity_status() -> Dict[str, Any]:
         "status": "Unknown",
         "status_url": status_url,
         "issue_link": "Refer to status page as no specific link is available"
-        # "last_update": "N/A",
-        # "title": "Error",
-        # "description": "Unable to fetch status"
     }
 
 async def get_anthropic_status() -> Dict[str, Any]:
@@ -942,12 +840,8 @@ async def get_anthropic_status() -> Dict[str, Any]:
         
         if feed.entries:
             latest_entry = feed.entries[0]
-            title = latest_entry.title
             issue_link = latest_entry.link
             description = latest_entry.description
-            # Use the new date parsing helper
-            published_time_sg = parse_feed_date(latest_entry)
-            # Check for operational issues
             description_lower = description.lower()
             is_operational = "resolved" in description_lower
             
@@ -956,9 +850,6 @@ async def get_anthropic_status() -> Dict[str, Any]:
                 "status": "Operational" if is_operational else "Disrupted",
                 "status_url": status_url,
                 "issue_link": issue_link,
-                # "last_update": published_time_sg,
-                # "title": title,
-                # "description": description[:200] + "..." if len(description) > 200 else description
             }
     except Exception as e:
         logger.error(f"Error fetching Anthropic status: {e}")
@@ -968,11 +859,7 @@ async def get_anthropic_status() -> Dict[str, Any]:
         "status": "Unknown",
         "status_url": status_url,
         "issue_link": "Refer to status page as no specific link is available"
-        # "last_update": "N/A",
-        # "title": "Error",
-        # "description": "Unable to fetch status"
     }
-
 
 # Cloud related status using single RSS source
 async def get_gcp_status() -> Dict[str, Any]:
@@ -1001,9 +888,6 @@ async def get_gcp_status() -> Dict[str, Any]:
             logger.info("Found feed in GCP, if latest feed shows resolved, means there are no issues")
             latest_entry = feed.entries[0]
             title = latest_entry.title
-            content = latest_entry.get('content', [{}])[0].get('value', '') if latest_entry.get('content') else ''
-            # Use the new date parsing helper
-            published_time_sg = parse_feed_date(latest_entry)
             # Check for operational issues based on title name
             title_lower = title.lower()
             is_operational = "resolved:" in title_lower
@@ -1046,7 +930,6 @@ async def get_azure_status() -> Dict[str, Any]:
         status_url = 'https://status.azure.com'
         logger.info("Parsing Azure status feed as feedparser object")
         feed = feedparser.parse(fetch_remote_content(rss_url))
-        #logger.info(f"Feed: {feed}")
         if feed.entries:
             logger.info("Found feed in Azure, indicates ongoing issues")
     
@@ -1099,7 +982,6 @@ async def get_aws_status() -> Dict[str, Any]:
         status_url = 'https://health.aws.amazon.com/health/status'
         logger.info("Parsing AWS status feed as feedparser object")
         feed = feedparser.parse(fetch_remote_content(rss_url))
-        #logger.info(f"Feed: {feed}")
         if feed.entries:
             logger.info("Found feed in AWS, indicates ongoing issues")
 
