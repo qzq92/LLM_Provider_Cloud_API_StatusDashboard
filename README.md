@@ -32,6 +32,13 @@ Note: *packages.txt* contains necessary apt package for streamlit server to inst
 
 ### Using uv
 
+Recommended Python version for compatibility: **3.12**
+
+```bash
+uv python install 3.12
+uv python pin 3.12
+```
+
 1. Install uv:
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
