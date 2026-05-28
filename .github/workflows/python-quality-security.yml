@@ -25,8 +25,11 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v5
 
+      - name: Sync project dependencies
+        run: uv sync --frozen --native-tls
+
       - name: Run lint checks
-        run: uv run --with pylint pylint *.py
+        run: uv run --with pylint pylint app_main.py helpers.py
 
   dependency-vulnerability-scan:
     name: Dependency Vulnerability Scan (pip-audit)
@@ -42,6 +45,9 @@ jobs:
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v5
+
+      - name: Sync project dependencies
+        run: uv sync --frozen --native-tls
 
       - name: Scan project dependencies
         run: uv run --with pip-audit pip-audit
