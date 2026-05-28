@@ -45,6 +45,22 @@ logging.basicConfig(
 
 # Set up logger for this module
 logger = logging.getLogger(__name__)
+FETCH_ERRORS = (RuntimeError, ValueError, TypeError, KeyError)
+APP_RUNTIME_ERRORS = (RuntimeError, ValueError, KeyError)
+SERVICE_NAMES = [
+    "openai",
+    "deepseek",
+    "gemini",
+    "anthropic",
+    "perplexity",
+    "langsmith",
+    "llamaindex",
+    "dify",
+    "aws",
+    "gcp",
+    "azure",
+    "alicloud",
+]
 
 # Simple Streamlit dashboard - no complex shutdown handling needed
 
@@ -142,6 +158,43 @@ def _run_async_status_checker(checker):
     """Run an async checker in an isolated event loop inside a worker thread."""
     return asyncio.run(checker())
 
+
+def _serialize_status_result(result: dict) -> dict:
+    """Serialize status payload values for Streamlit session state."""
+    serialized_result = {}
+    for key, value in result.items():
+        if isinstance(value, datetime):
+            serialized_result[key] = value.strftime("%Y-%m-%d %H:%M:%S")
+        else:
+            serialized_result[key] = value
+    return serialized_result
+
+
+def _build_error_status_payload(service_name: str, error: Exception) -> dict:
+    """Build fallback payload for failed provider checks."""
+    logger.error("Error fetching %s status: %s", service_name, error)
+    return {
+        "name": f"{service_name.title()} Status",
+        "status": "Unknown",
+        "status_url": "#",
+        "last_update": "N/A",
+        "title": "Error",
+        "description": f"Error: {str(error)}",
+    }
+
+
+def _build_status_results(results: list) -> dict:
+    """Convert gathered provider results into a normalized dict."""
+    status_results = {}
+    for service_name, result in zip(SERVICE_NAMES, results):
+        if isinstance(result, Exception):
+            status_results[service_name] = _build_error_status_payload(
+                service_name, result
+            )
+        else:
+            status_results[service_name] = _serialize_status_result(result)
+    return status_results
+
 async def fetch_all_statuses():
     """Fetch all statuses concurrently using asyncio.gather()."""
     logger.info("Fetching all service statuses concurrently with asyncio")
@@ -175,44 +228,119 @@ async def fetch_all_statuses():
         progress_bar.progress(0.8)
         status_text.text("✅ All status checks completed!")
 
-        # Convert results to dictionary format
-        service_names = [
-            'openai', 'deepseek', 'gemini', 'anthropic', 'perplexity',
-            'langsmith', 'llamaindex', 'dify', 'aws', 'gcp', 'azure', 'alicloud'
-        ]
-        status_results = {}
-
-        for _, (service_name, result) in enumerate(zip(service_names, results)):
-            if isinstance(result, Exception):
-                logger.error("Error fetching %s status: %s", service_name, result)
-                status_results[service_name] = {
-                    "name": f"{service_name.title()} Status",
-                    "status": "Unknown",
-                    "status_url": "#",
-                    "last_update": "N/A",
-                    "title": "Error",
-                    "description": f"Error: {str(result)}"
-                }
-            else:
-                # Convert datetime objects to strings for serialization
-                serialized_result = {}
-                for key, value in result.items():
-                    if isinstance(value, datetime):
-                        serialized_result[key] = value.strftime('%Y-%m-%d %H:%M:%S')
-                    else:
-                        serialized_result[key] = value
-                status_results[service_name] = serialized_result
-
-        # Update progress
+        status_results = _build_status_results(results)
         progress_bar.progress(1.0)
 
         return status_results
 
-    except Exception as e:
+    except FETCH_ERRORS as e:
         logger.error("Error in fetch_all_statuses: %s", e)
         progress_bar.progress(1.0)
         status_text.text("❌ Error occurred during status checks")
         return {}
+
+
+def _get_current_sg_time() -> datetime:
+    """Return current Singapore time."""
+    gmt_plus_8_timezone = pytz.timezone("Asia/Singapore")
+    return datetime.now(tz=gmt_plus_8_timezone)
+
+
+def _get_or_refresh_statuses(current_time: datetime) -> dict:
+    """Return cached statuses or fetch fresh data when cache is invalid."""
+    if "last_refresh_time" not in st.session_state:
+        st.session_state.last_refresh_time = current_time
+
+    time_since_refresh = (current_time - st.session_state.last_refresh_time).seconds
+    if time_since_refresh >= 300:
+        st.session_state.last_refresh_time = current_time
+        st.session_state.cached_statuses = None
+        st.session_state.cache_timestamp = None
+
+    should_refresh = (
+        st.session_state.cached_statuses is None
+        or st.session_state.cache_timestamp is None
+    )
+    if should_refresh:
+        all_statuses = asyncio.run(fetch_all_statuses())
+        st.session_state.cached_statuses = all_statuses
+        st.session_state.cache_timestamp = current_time
+        st.session_state.last_refresh = current_time
+        return all_statuses
+    return st.session_state.cached_statuses
+
+
+def _render_llm_api_section(all_statuses: dict) -> None:
+    """Render main LLM API status cards."""
+    st.header("🤖 LLM API Status")
+    st.markdown(
+        "Monitoring OpenAI, DeepSeek, Gemini, Perplexity and Anthropic API availability"
+    )
+    col1, col2, col3, col4, col5 = st.columns(5)
+    with col1:
+        st.markdown(create_status_card(all_statuses["openai"]), unsafe_allow_html=True)
+    with col2:
+        st.markdown(create_status_card(all_statuses["deepseek"]), unsafe_allow_html=True)
+    with col3:
+        st.markdown(create_status_card(all_statuses["gemini"]), unsafe_allow_html=True)
+    with col4:
+        st.markdown(
+            create_status_card(all_statuses["anthropic"]), unsafe_allow_html=True
+        )
+    with col5:
+        st.markdown(
+            create_status_card(all_statuses["perplexity"]), unsafe_allow_html=True
+        )
+
+
+def _render_other_llm_section(all_statuses: dict) -> None:
+    """Render supporting LLM platform status cards."""
+    st.header("🔧 Other LLM related platforms API status")
+    st.markdown(
+        "Monitoring LangSmith, LlamaIndex and Dify API availability "
+        "for LLM observability and tracing"
+    )
+    col_langsmith, col_llamaindex, col_dify = st.columns(3)
+    with col_langsmith:
+        st.markdown(
+            create_status_card(all_statuses["langsmith"]), unsafe_allow_html=True
+        )
+    with col_llamaindex:
+        st.markdown(
+            create_status_card(all_statuses["llamaindex"]), unsafe_allow_html=True
+        )
+    with col_dify:
+        st.markdown(create_status_card(all_statuses["dify"]), unsafe_allow_html=True)
+
+
+def _render_cloud_section(all_statuses: dict) -> None:
+    """Render selected cloud provider status cards."""
+    st.header("☁️ Selected Cloud Services Status")
+    st.markdown(
+        "Note: Due to large number of service offered, it is not possible to provide "
+        "a link to actual cause. Please refer to respective status page for more details."
+    )
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.markdown(
+            create_status_card(all_statuses["aws"], include_details=False),
+            unsafe_allow_html=True,
+        )
+    with col2:
+        st.markdown(
+            create_status_card(all_statuses["gcp"], include_details=False),
+            unsafe_allow_html=True,
+        )
+    with col3:
+        st.markdown(
+            create_status_card(all_statuses["azure"], include_details=False),
+            unsafe_allow_html=True,
+        )
+    with col4:
+        st.markdown(
+            create_status_card(all_statuses["alicloud"], include_details=False),
+            unsafe_allow_html=True,
+        )
 
 def main():
     """Main function to run the Streamlit dashboard."""
@@ -225,130 +353,22 @@ def main():
         unsafe_allow_html=True
     )
 
-    # Get current time for display
-    gmt_plus_8_timezone = pytz.timezone('Asia/Singapore')
-    current_time = datetime.now(tz=gmt_plus_8_timezone)
-    last_updated = current_time.strftime('%d-%m-%Y %H:%M:%S')
-
-    # Simple auto-refresh mechanism
-    if 'last_refresh_time' not in st.session_state:
-        st.session_state.last_refresh_time = current_time
-
-    # Calculate time since last refresh
-    time_since_refresh = (current_time - st.session_state.last_refresh_time).seconds
-
+    current_time = _get_current_sg_time()
+    last_updated = current_time.strftime("%d-%m-%Y %H:%M:%S")
     # Display last refresh time
     st.info(f"⏰ **Last Refresh (GMT+8):** {last_updated}")
+    all_statuses = _get_or_refresh_statuses(current_time)
+    _render_llm_api_section(all_statuses)
+    _render_other_llm_section(all_statuses)
+    _render_cloud_section(all_statuses)
 
-    # Auto-refresh logic - check if 300 seconds have passed
-    if time_since_refresh >= 300:
-        # Update the last refresh time
-        st.session_state.last_refresh_time = current_time
-        # Clear cache to force fresh data fetch
-        st.session_state.cached_statuses = None
-        st.session_state.cache_timestamp = None
-
-    # Check if we need to fetch new data
-    should_refresh = (
-        st.session_state.cached_statuses is None or
-        st.session_state.cache_timestamp is None
-    )
-
-    if should_refresh:
-        # Fetch statuses with caching
-        all_statuses = asyncio.run(fetch_all_statuses())
-        st.session_state.cached_statuses = all_statuses
-        st.session_state.cache_timestamp = current_time
-        st.session_state.last_refresh = current_time
-    else:
-        # Use cached data
-        all_statuses = st.session_state.cached_statuses
-    openai_data = all_statuses['openai']
-    deepseek_data = all_statuses['deepseek']
-    gemini_data = all_statuses['gemini']
-    anthropic_data = all_statuses['anthropic']
-    perplexity_data = all_statuses['perplexity']
-    langsmith_data = all_statuses['langsmith']
-    llamaindex_data = all_statuses['llamaindex']
-    dify_data = all_statuses['dify']
-    aws_data = all_statuses['aws']
-    gcp_data = all_statuses['gcp']
-    azure_data = all_statuses['azure']
-    alicloud_data = all_statuses['alicloud']
-
-
-    # LLM API Status Section
-    st.header("🤖 LLM API Status")
-    st.markdown("Monitoring OpenAI, DeepSeek, Gemini, Perplexity and Anthropic API availability")
-
-    # Create columns for LLM APIs
-    col1, col2, col3, col4, col5 = st.columns(5)
-
-    with col1:
-        st.markdown(create_status_card(openai_data), unsafe_allow_html=True)
-
-    with col2:
-        st.markdown(create_status_card(deepseek_data), unsafe_allow_html=True)
-
-    with col3:
-        st.markdown(create_status_card(gemini_data), unsafe_allow_html=True)
-
-    with col4:
-        st.markdown(create_status_card(anthropic_data), unsafe_allow_html=True)
-
-    with col5:
-        st.markdown(create_status_card(perplexity_data), unsafe_allow_html=True)
-
-    # LangSmith, LlamaIndex & Dify API Status Section
-    st.header("🔧 Other LLM related platforms API status")
-    st.markdown(
-        "Monitoring LangSmith, LlamaIndex and Dify API availability "
-        "for LLM observability and tracing"
-    )
-
-    # Create columns for LangSmith, LlamaIndex and Dify
-    col_langsmith, col_llamaindex, col_dify = st.columns(3)
-
-    with col_langsmith:
-        st.markdown(create_status_card(langsmith_data), unsafe_allow_html=True)
-
-    with col_llamaindex:
-        st.markdown(create_status_card(llamaindex_data), unsafe_allow_html=True)
-
-    with col_dify:
-        st.markdown(create_status_card(dify_data), unsafe_allow_html=True)
-
-    # Cloud Services Status Section
-    st.header("☁️ Selected Cloud Services Status")
-    st.markdown(
-        "Note: Due to large number of service offered, it is not possible to provide "
-        "a link to actual cause. Please refer to respective status page for more details."
-    )
-
-    # Create columns for Cloud Services
-    col6, col7, col8, col9 = st.columns(4)
-
-    with col6:
-        st.markdown(create_status_card(aws_data, include_details=False), unsafe_allow_html=True)
-
-    with col7:
-        st.markdown(create_status_card(gcp_data, include_details=False), unsafe_allow_html=True)
-
-    with col8:
-        st.markdown(create_status_card(azure_data, include_details=False), unsafe_allow_html=True)
-
-    with col9:
-        st.markdown(
-            create_status_card(alicloud_data, include_details=False),
-            unsafe_allow_html=True
-        )
 if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
         logger.info("Received KeyboardInterrupt, shutting down gracefully...")
         cleanup_resources()
-    except Exception as e:
+    except APP_RUNTIME_ERRORS as e:
         logger.error("Unexpected error: %s", e)
         cleanup_resources()
         raise
