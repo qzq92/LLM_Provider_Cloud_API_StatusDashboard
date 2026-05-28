@@ -4,6 +4,7 @@ A Streamlit application for monitoring API and cloud service statuses.
 """
 import asyncio
 import logging
+import os
 import sys
 from datetime import datetime
 
@@ -25,6 +26,25 @@ from helpers import (
     get_openai_status,
     get_perplexity_status,
 )
+
+# Windows-only TLS bootstrap for OpenSSL/Applink edge cases.
+if sys.platform == "win32":
+    if "SSLKEYLOGFILE" in os.environ:
+        del os.environ["SSLKEYLOGFILE"]
+
+    import ssl
+    import _ssl
+
+    _ = _ssl.OPENSSL_VERSION
+    _ = ssl.OPENSSL_VERSION
+
+    try:
+        import truststore
+
+        truststore.inject_into_ssl()
+    except ImportError:
+        # Continue if truststore is unavailable in the environment.
+        pass
 
 # Initialize session state for caching
 if 'last_refresh' not in st.session_state:
