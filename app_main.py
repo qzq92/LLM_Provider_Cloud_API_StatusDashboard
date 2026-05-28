@@ -127,7 +127,10 @@ def create_status_card(service_data: dict, include_details=True) -> str:
         # Add issue link for disrupted services
         issue_link = service_data.get('issue_link')
         if issue_link and issue_link.startswith("http"):
-            card_content += f"""<strong>More details:</strong> <a href='{issue_link}' target='_blank'>{issue_link}</a>"""
+            card_content += (
+                f"<strong>More details:</strong> "
+                f"<a href='{issue_link}' target='_blank'>{issue_link}</a>"
+            )
         else:
             card_content += f"""<strong>More details:</strong> {issue_link}"""
 
@@ -298,7 +301,10 @@ def main():
 
     # LangSmith, LlamaIndex & Dify API Status Section
     st.header("🔧 Other LLM related platforms API status")
-    st.markdown("Monitoring LangSmith, LlamaIndex and Dify API availability for LLM observability and tracing")
+    st.markdown(
+        "Monitoring LangSmith, LlamaIndex and Dify API availability "
+        "for LLM observability and tracing"
+    )
 
     # Create columns for LangSmith, LlamaIndex and Dify
     col_langsmith, col_llamaindex, col_dify = st.columns(3)
@@ -314,7 +320,10 @@ def main():
 
     # Cloud Services Status Section
     st.header("☁️ Selected Cloud Services Status")
-    st.markdown("Note: Due to large number of service offered, it is not possible to provide a link to actual cause. Please refer to respective status page for more details.")
+    st.markdown(
+        "Note: Due to large number of service offered, it is not possible to provide "
+        "a link to actual cause. Please refer to respective status page for more details."
+    )
 
     # Create columns for Cloud Services
     col6, col7, col8, col9 = st.columns(4)
@@ -329,7 +338,10 @@ def main():
         st.markdown(create_status_card(azure_data, include_details=False), unsafe_allow_html=True)
 
     with col9:
-        st.markdown(create_status_card(alicloud_data, include_details=False), unsafe_allow_html=True)
+        st.markdown(
+            create_status_card(alicloud_data, include_details=False),
+            unsafe_allow_html=True
+        )
 if __name__ == "__main__":
     try:
         main()

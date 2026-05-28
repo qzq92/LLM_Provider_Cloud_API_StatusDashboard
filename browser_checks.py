@@ -19,9 +19,11 @@ from status_payloads import build_operational_payload, build_unknown_payload
 
 logger = logging.getLogger(__name__)
 
-_chrome_driver_gemini = None
-_chrome_driver_alicloud = None
-_chrome_driver_dify = None
+_STATE: Dict[str, Any] = {
+    "chrome_driver_gemini": None,
+    "chrome_driver_alicloud": None,
+    "chrome_driver_dify": None,
+}
 
 BROWSER_TTL_OPERATIONAL_SECONDS = 120
 BROWSER_TTL_DISRUPTED_SECONDS = 30
@@ -82,33 +84,32 @@ def set_cached_browser_status(cache_key: str, status_data: Dict[str, Any]) -> No
 
 def cleanup_browser_resources() -> None:
     """Close all browser drivers managed by this module."""
-    global _chrome_driver_gemini, _chrome_driver_alicloud, _chrome_driver_dify
-    if _chrome_driver_gemini is not None:
+    if _STATE["chrome_driver_gemini"] is not None:
         try:
-            _chrome_driver_gemini.quit()
+            _STATE["chrome_driver_gemini"].quit()
             logger.info("Cleaned up Gemini Chrome driver")
         except CLEANUP_BROWSER_ERRORS as e:
             logger.warning("Error cleaning up Gemini Chrome driver: %s", e)
         finally:
-            _chrome_driver_gemini = None
+            _STATE["chrome_driver_gemini"] = None
 
-    if _chrome_driver_alicloud is not None:
+    if _STATE["chrome_driver_alicloud"] is not None:
         try:
-            _chrome_driver_alicloud.quit()
+            _STATE["chrome_driver_alicloud"].quit()
             logger.info("Cleaned up Alibaba Cloud Chrome driver")
         except CLEANUP_BROWSER_ERRORS as e:
             logger.warning("Error cleaning up Alibaba Cloud Chrome driver: %s", e)
         finally:
-            _chrome_driver_alicloud = None
+            _STATE["chrome_driver_alicloud"] = None
 
-    if _chrome_driver_dify is not None:
+    if _STATE["chrome_driver_dify"] is not None:
         try:
-            _chrome_driver_dify.quit()
+            _STATE["chrome_driver_dify"].quit()
             logger.info("Cleaned up Dify Chrome driver")
         except CLEANUP_BROWSER_ERRORS as e:
             logger.warning("Error cleaning up Dify Chrome driver: %s", e)
         finally:
-            _chrome_driver_dify = None
+            _STATE["chrome_driver_dify"] = None
 
 
 def get_dify_status() -> Dict[str, Any]:
@@ -119,19 +120,18 @@ def get_dify_status() -> Dict[str, Any]:
     if cached_result is not None:
         return cached_result
 
-    global _chrome_driver_dify
     driver = None
     try:
-        if _chrome_driver_dify is not None:
+        if _STATE["chrome_driver_dify"] is not None:
             try:
-                _chrome_driver_dify.current_url
-                driver = _chrome_driver_dify
+                _STATE["chrome_driver_dify"].current_url
+                driver = _STATE["chrome_driver_dify"]
                 logger.info("Reusing existing Dify Chrome driver instance")
             except DRIVER_CHECK_ERRORS:
                 logger.info("Existing Dify driver is no longer functional, creating new one")
-                _chrome_driver_dify = None
+                _STATE["chrome_driver_dify"] = None
 
-        if _chrome_driver_dify is None:
+        if _STATE["chrome_driver_dify"] is None:
             logger.info("Creating new Chrome driver for Dify status")
             chrome_options = Options()
             for arg in [
@@ -147,7 +147,9 @@ def get_dify_status() -> Dict[str, Any]:
                 chrome_options.add_argument(arg)
             try:
                 logger.info("Attempting to use undetected_chromedriver for Dify")
-                _chrome_driver_dify = uc.Chrome(options=chrome_options, use_subprocess=True)
+                _STATE["chrome_driver_dify"] = uc.Chrome(
+                    options=chrome_options, use_subprocess=True
+                )
             except DRIVER_CHECK_ERRORS as uc_error:
                 logger.warning("undetected_chromedriver failed for Dify: %s", uc_error)
                 options = webdriver.ChromeOptions()
@@ -164,14 +166,14 @@ def get_dify_status() -> Dict[str, Any]:
                 try:
                     driver_path = ChromeDriverManager().install()
                     logger.info("ChromeDriver available at: %s", driver_path)
-                    _chrome_driver_dify = webdriver.Chrome(
+                    _STATE["chrome_driver_dify"] = webdriver.Chrome(
                         service=Service(driver_path), options=options
                     )
                 except DRIVER_CHECK_ERRORS as cm_error:
                     logger.error("ChromeDriverManager also failed for Dify: %s", cm_error)
-                    _chrome_driver_dify = None
+                    _STATE["chrome_driver_dify"] = None
 
-        driver = _chrome_driver_dify
+        driver = _STATE["chrome_driver_dify"]
         if driver is not None:
             driver.get(status_url)
             wait = WebDriverWait(driver, 10)
@@ -225,19 +227,18 @@ def get_gemini_status() -> Dict[str, Any]:
     if cached_result is not None:
         return cached_result
 
-    global _chrome_driver_gemini
     driver = None
     try:
-        if _chrome_driver_gemini is not None:
+        if _STATE["chrome_driver_gemini"] is not None:
             try:
-                _chrome_driver_gemini.current_url
-                driver = _chrome_driver_gemini
+                _STATE["chrome_driver_gemini"].current_url
+                driver = _STATE["chrome_driver_gemini"]
                 logger.info("Reusing existing Gemini Chrome driver instance")
             except DRIVER_CHECK_ERRORS:
                 logger.info("Existing Gemini driver is no longer functional, creating new one")
-                _chrome_driver_gemini = None
+                _STATE["chrome_driver_gemini"] = None
 
-        if _chrome_driver_gemini is None:
+        if _STATE["chrome_driver_gemini"] is None:
             chrome_options = Options()
             for arg in [
                 "--headless",
@@ -251,7 +252,7 @@ def get_gemini_status() -> Dict[str, Any]:
             ]:
                 chrome_options.add_argument(arg)
             try:
-                _chrome_driver_gemini = uc.Chrome(
+                _STATE["chrome_driver_gemini"] = uc.Chrome(
                     options=chrome_options, use_subprocess=True
                 )
             except DRIVER_CHECK_ERRORS as uc_error:
@@ -270,14 +271,14 @@ def get_gemini_status() -> Dict[str, Any]:
                 try:
                     driver_path = ChromeDriverManager().install()
                     logger.info("ChromeDriver available at: %s", driver_path)
-                    _chrome_driver_gemini = webdriver.Chrome(
+                    _STATE["chrome_driver_gemini"] = webdriver.Chrome(
                         service=Service(driver_path), options=options
                     )
                 except DRIVER_CHECK_ERRORS as cm_error:
                     logger.error("ChromeDriverManager also failed for Gemini: %s", cm_error)
-                    _chrome_driver_gemini = None
+                    _STATE["chrome_driver_gemini"] = None
 
-        driver = _chrome_driver_gemini
+        driver = _STATE["chrome_driver_gemini"]
         if driver is not None:
             driver.get(status_url)
             wait = WebDriverWait(driver, 10)
@@ -332,17 +333,16 @@ def get_alicloud_status() -> Dict[str, Any]:
     if cached_result is not None:
         return cached_result
 
-    global _chrome_driver_alicloud
     driver = None
     try:
-        if _chrome_driver_alicloud is not None:
+        if _STATE["chrome_driver_alicloud"] is not None:
             try:
-                _chrome_driver_alicloud.current_url
-                driver = _chrome_driver_alicloud
+                _STATE["chrome_driver_alicloud"].current_url
+                driver = _STATE["chrome_driver_alicloud"]
             except DRIVER_CHECK_ERRORS:
-                _chrome_driver_alicloud = None
+                _STATE["chrome_driver_alicloud"] = None
 
-        if _chrome_driver_alicloud is None:
+        if _STATE["chrome_driver_alicloud"] is None:
             chrome_options = Options()
             for arg in [
                 "--headless",
@@ -356,7 +356,7 @@ def get_alicloud_status() -> Dict[str, Any]:
             ]:
                 chrome_options.add_argument(arg)
             try:
-                _chrome_driver_alicloud = uc.Chrome(
+                _STATE["chrome_driver_alicloud"] = uc.Chrome(
                     options=chrome_options, use_subprocess=True
                 )
             except DRIVER_CHECK_ERRORS as uc_error:
@@ -377,16 +377,16 @@ def get_alicloud_status() -> Dict[str, Any]:
                 try:
                     driver_path = ChromeDriverManager().install()
                     logger.info("ChromeDriver available at: %s", driver_path)
-                    _chrome_driver_alicloud = webdriver.Chrome(
+                    _STATE["chrome_driver_alicloud"] = webdriver.Chrome(
                         service=Service(driver_path), options=options
                     )
                 except DRIVER_CHECK_ERRORS as cm_error:
                     logger.error(
                         "ChromeDriverManager also failed for Alibaba Cloud: %s", cm_error
                     )
-                    _chrome_driver_alicloud = None
+                    _STATE["chrome_driver_alicloud"] = None
 
-        driver = _chrome_driver_alicloud
+        driver = _STATE["chrome_driver_alicloud"]
         if driver is not None:
             driver.get(status_url)
             wait = WebDriverWait(driver, 10)

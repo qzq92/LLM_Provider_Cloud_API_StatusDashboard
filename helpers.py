@@ -25,8 +25,8 @@ from status_payloads import (
 # Configure logging for helpers module
 logger = logging.getLogger(__name__)
 
-# Global session for HTTP requests to avoid connection pool issues
-_http_session = None
+# Module state for HTTP session lifecycle.
+_STATE: Dict[str, Any] = {"http_session": None}
 _request_semaphore = threading.Semaphore(3)
 _request_lock = threading.Lock()
 DEFAULT_HTTP_TIMEOUT = 10
@@ -47,17 +47,16 @@ RESOURCE_CLEANUP_ERRORS = (
 
 def get_http_session():
     """Get or create a global HTTP session with proper connection pooling."""
-    global _http_session
-    if _http_session is None:
-        _http_session = requests.Session()
-        
+    if _STATE["http_session"] is None:
+        _STATE["http_session"] = requests.Session()
+
         # Configure retry strategy with reduced attempts
         retry_strategy = Retry(
             total=2,              # Reduced: Only 2 retry attempts
             backoff_factor=0.5,   # Reduced: Shorter backoff time
             status_forcelist=[500, 502, 503, 504],  # Removed 429 to avoid rate limiting
         )
-        
+
         # Configure adapter with retry strategy and reduced connection pool
         adapter = HTTPAdapter(
             max_retries=retry_strategy,
@@ -65,20 +64,19 @@ def get_http_session():
             pool_maxsize=5,       # Reduced: Maximum number of connections in pool
             pool_block=False      # Don't block when pool is full
         )
-        
-        _http_session.mount("http://", adapter)
-        _http_session.mount("https://", adapter)
-        
+
+        _STATE["http_session"].mount("http://", adapter)
+        _STATE["http_session"].mount("https://", adapter)
+
         # Add connection limits to prevent resource exhaustion
-        _http_session.headers.update({
+        _STATE["http_session"].headers.update({
             'Connection': 'keep-alive',
             'Keep-Alive': 'timeout=5, max=10',
             'User-Agent': 'LLM-Status-Dashboard/1.0'
         })
-        
+
         logger.info("Created new HTTP session with optimized connection pooling")
-    
-    return _http_session
+    return _STATE["http_session"]
 
 
 def fetch_remote_content(url: str) -> bytes:
@@ -92,14 +90,12 @@ def fetch_remote_content(url: str) -> bytes:
 
 def cleanup_resources():
     """Clean up global resources to prevent connection pool issues."""
-    global _http_session
     cleanup_browser_resources()
-    
     # Clean up HTTP session with aggressive connection cleanup
-    if _http_session is not None:
+    if _STATE["http_session"] is not None:
         try:
             # Close all connections in the pool
-            _http_session.close()
+            _STATE["http_session"].close()
             # Force garbage collection of connections
             import gc
             gc.collect()
@@ -107,7 +103,7 @@ def cleanup_resources():
         except RESOURCE_CLEANUP_ERRORS as e:
             logger.warning("Error cleaning up HTTP session: %s", e)
         finally:
-            _http_session = None
+            _STATE["http_session"] = None
 
 
 # API statuses
@@ -130,7 +126,6 @@ async def get_openai_status() -> Dict[str, Any]:
         rss_url = 'https://status.openai.com/feed.rss'
         status_url = 'https://status.openai.com'
         feed = feedparser.parse(fetch_remote_content(rss_url))
-        
         if feed.entries:
             latest_entry = feed.entries[0]
             issue_link = latest_entry.link
@@ -139,11 +134,10 @@ async def get_openai_status() -> Dict[str, Any]:
             description_lower = description.lower()
 
             is_operational = "all impacted services have now fully recovered" in description_lower
-            
             return build_operational_payload(name, is_operational, status_url, issue_link)
     except FETCH_STATUS_ERRORS as e:
         logger.error("Error fetching OpenAI status: %s", e)
-    
+
     return build_unknown_payload(name, status_url)
 
 async def get_deepseek_status() -> Dict[str, Any]:
@@ -164,8 +158,7 @@ async def get_deepseek_status() -> Dict[str, Any]:
     try:
         rss_url = 'https://status.deepseek.com/history.atom'
         status_url = 'https://status.deepseek.com'
-        feed = feedparser.parse(fetch_remote_content(rss_url))
-        
+        feed = feedparser.parse(fetch_remote_content(rss_url)) 
         if feed.entries:
             latest_entry = feed.entries[0]
             issue_link = latest_entry.link
@@ -174,17 +167,15 @@ async def get_deepseek_status() -> Dict[str, Any]:
                 if latest_entry.get("content")
                 else ""
             )
-            
+
             # Check for operational issues
             content_lower = content.lower()
-
             # Look for specific keywords in the content
             is_operational = True if "resolved" in content_lower else False
-            
             return build_operational_payload(name, is_operational, status_url, issue_link)
     except FETCH_STATUS_ERRORS as e:
         logger.error("Error fetching DeepSeek status: %s", e)
-    
+
     return build_unknown_payload(name, status_url)
 
 async def get_langsmith_status() -> Dict[str, Any]:
@@ -206,7 +197,6 @@ async def get_langsmith_status() -> Dict[str, Any]:
         rss_url = 'https://status.smith.langchain.com/feed.rss'
         status_url = 'https://status.smith.langchain.com'
         feed = feedparser.parse(fetch_remote_content(rss_url))
-        
         if feed.entries:
             latest_entry = feed.entries[0]
             issue_link = latest_entry.link
@@ -219,7 +209,6 @@ async def get_langsmith_status() -> Dict[str, Any]:
             return build_operational_payload(name, is_operational, status_url, issue_link)
     except FETCH_STATUS_ERRORS as e:
         logging.error("Error fetching LangSmith status: %s", e)
-    
     return build_unknown_payload(name, status_url)
 
 
@@ -243,10 +232,8 @@ async def get_llamaindex_status() -> Dict[str, Any]:
 
     try:
         soup = BeautifulSoup(fetch_remote_content(status_url), 'html.parser')
-        
         # Look for the nested <p class="color-secondary"> element
         color_secondary_elements = soup.find_all('p', class_='color-secondary')
-        
         is_operational = False
         for element in color_secondary_elements:
             text_content = element.get_text().strip().lower()
@@ -258,12 +245,11 @@ async def get_llamaindex_status() -> Dict[str, Any]:
                 )
                 is_operational = True
                 break
-        
         return build_operational_payload(name, is_operational, status_url)
 
     except FETCH_STATUS_ERRORS as e:
         logging.error("Error fetching LlamaIndex status: %s", e)
-    
+
     return build_unknown_payload(name, status_url)
 
 
@@ -296,7 +282,7 @@ async def get_perplexity_status() -> Dict[str, Any]:
         rss_url = 'https://status.perplexity.com/history.rss'
         status_url = 'https://status.perplexity.com'
         feed = feedparser.parse(fetch_remote_content(rss_url))
-        
+
         if feed.entries:
             latest_entry = feed.entries[0]
             issue_link = latest_entry.link
@@ -307,11 +293,10 @@ async def get_perplexity_status() -> Dict[str, Any]:
                 "resolved" in description_lower
                 and "api outage" not in description_lower
             )
-            
+
             return build_operational_payload(name, is_operational, status_url, issue_link)
     except FETCH_STATUS_ERRORS as e:
         logger.error("Error fetching Perplexity status: %s", e)
-    
     return build_unknown_payload(name, status_url)
 
 async def get_anthropic_status() -> Dict[str, Any]:
@@ -333,18 +318,18 @@ async def get_anthropic_status() -> Dict[str, Any]:
         rss_url = 'https://status.anthropic.com/history.rss'
         status_url = 'https://status.anthropic.com'
         feed = feedparser.parse(fetch_remote_content(rss_url))
-        
+
         if feed.entries:
             latest_entry = feed.entries[0]
             issue_link = latest_entry.link
             description = latest_entry.description
             description_lower = description.lower()
             is_operational = "resolved" in description_lower
-            
+
             return build_operational_payload(name, is_operational, status_url, issue_link)
     except FETCH_STATUS_ERRORS as e:
         logger.error("Error fetching Anthropic status: %s", e)
-    
+
     return build_unknown_payload(name, status_url)
 
 # Cloud related status using single RSS source
@@ -408,12 +393,12 @@ async def get_azure_status() -> Dict[str, Any]:
         feed = feedparser.parse(fetch_remote_content(rss_url))
         if feed.entries:
             logger.info("Found feed in Azure, indicates ongoing issues")
-    
+
             return build_status_payload(name, "Disrupted", status_url)
         # No feed found, assume operational
-        else:
-            logger.info("Azure: No feed found, indicates normal status")
-            return build_status_payload(name, "Operational", status_url)
+
+        logger.info("Azure: No feed found, indicates normal status")
+        return build_status_payload(name, "Operational", status_url)
     except FETCH_STATUS_ERRORS as e:
         logger.error("Error fetching Azure status: %s", e)
 
@@ -444,13 +429,12 @@ async def get_aws_status() -> Dict[str, Any]:
 
             return build_status_payload(name, "Disrupted", status_url)
         # No feed found, assume operational
-        else:
-            logger.info("AWS: No feed found, indicates normal status")
-            return build_status_payload(name, "Operational", status_url)
+        logger.info("AWS: No feed found, indicates normal status")
+        return build_status_payload(name, "Operational", status_url)
 
     except FETCH_STATUS_ERRORS as e:
         logger.error("Error fetching AWS status: %s", e)
-    
+
     return build_unknown_payload(name, status_url)
 
 
