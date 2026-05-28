@@ -30,7 +30,7 @@ Note: *packages.txt* contains necessary apt package for streamlit server to inst
 
 ## Installation
 
-### Option 1: Using uv (Recommended)
+### Using uv
 
 1. Install uv:
 ```bash
@@ -41,18 +41,6 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 ```bash
 uv sync
 uv run streamlit run app_main.py
-```
-
-### Option 2: Using pip
-
-1. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
-
-2. Run the dashboard:
-```bash
-streamlit run app_main.py
 ```
 
 ## Browser Requirements
