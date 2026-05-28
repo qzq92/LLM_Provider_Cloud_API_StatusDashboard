@@ -3,16 +3,28 @@ LLM APIs & Cloud Services Status Dashboard
 A Streamlit application for monitoring API and cloud service statuses.
 """
 import asyncio
-import pytz
 import logging
 import sys
-import streamlit as st
-from helpers import (
-    get_openai_status, get_deepseek_status, get_gemini_status, get_anthropic_status,
-    get_aws_status, get_gcp_status, get_azure_status, get_alicloud_status, get_perplexity_status, 
-    get_langsmith_status, get_llamaindex_status, get_dify_status, cleanup_resources
-)
 from datetime import datetime
+
+import pytz
+import streamlit as st
+
+from helpers import (
+    cleanup_resources,
+    get_alicloud_status,
+    get_anthropic_status,
+    get_aws_status,
+    get_azure_status,
+    get_deepseek_status,
+    get_dify_status,
+    get_gcp_status,
+    get_gemini_status,
+    get_langsmith_status,
+    get_llamaindex_status,
+    get_openai_status,
+    get_perplexity_status,
+)
 
 # Initialize session state for caching
 if 'last_refresh' not in st.session_state:
@@ -110,7 +122,7 @@ def create_status_card(service_data: dict, include_details=True) -> str:
         <p><strong>Status:</strong> {service_data['status']}</p>
         <p><strong>Source:</strong> <a href='{status_url}' target='_blank'>{status_url}</a></p>
     """
-    
+
     if status_class == "status-issues" and include_details:
         # Add issue link for disrupted services
         issue_link = service_data.get('issue_link')
@@ -132,11 +144,11 @@ async def fetch_all_statuses():
     logger.info("Fetching all service statuses concurrently with asyncio")
     progress_bar = st.progress(0)
     status_text = st.empty()
-    
+
     # Update progress
     progress_bar.progress(0.1)
     status_text.text("🚀 Starting concurrent status checks...")
-    
+
     try:
         # Run all status checks in worker threads to avoid blocking the event loop
         # (many helpers use blocking I/O like requests/feedparser/selenium).
@@ -155,18 +167,18 @@ async def fetch_all_statuses():
             asyncio.to_thread(get_alicloud_status),  # Run sync function in thread
             return_exceptions=True  # Don't fail if one service fails
         )
-        
+
         # Update progress
         progress_bar.progress(0.8)
         status_text.text("✅ All status checks completed!")
-        
+
         # Convert results to dictionary format
         service_names = [
-            'openai', 'deepseek', 'gemini', 'anthropic', 'perplexity', 
+            'openai', 'deepseek', 'gemini', 'anthropic', 'perplexity',
             'langsmith', 'llamaindex', 'dify', 'aws', 'gcp', 'azure', 'alicloud'
         ]
         status_results = {}
-        
+
         for _, (service_name, result) in enumerate(zip(service_names, results)):
             if isinstance(result, Exception):
                 logger.error("Error fetching %s status: %s", service_name, result)
@@ -187,12 +199,12 @@ async def fetch_all_statuses():
                     else:
                         serialized_result[key] = value
                 status_results[service_name] = serialized_result
-        
+
         # Update progress
         progress_bar.progress(1.0)
-        
+
         return status_results
-        
+
     except Exception as e:
         logger.error("Error in fetch_all_statuses: %s", e)
         progress_bar.progress(1.0)
@@ -202,7 +214,7 @@ async def fetch_all_statuses():
 def main():
     """Main function to run the Streamlit dashboard."""
     logger.info("Starting Dashboard")
-    
+
     st.title("📊 LLM APIs & Cloud Services Status Dashboard (refresh every 5 minutes)")
     # Client-side auto refresh every 5 minutes (non-blocking on server thread).
     st.markdown(
@@ -214,17 +226,17 @@ def main():
     gmt_plus_8_timezone = pytz.timezone('Asia/Singapore')
     current_time = datetime.now(tz=gmt_plus_8_timezone)
     last_updated = current_time.strftime('%d-%m-%Y %H:%M:%S')
-    
+
     # Simple auto-refresh mechanism
     if 'last_refresh_time' not in st.session_state:
         st.session_state.last_refresh_time = current_time
-    
+
     # Calculate time since last refresh
     time_since_refresh = (current_time - st.session_state.last_refresh_time).seconds
-    
+
     # Display last refresh time
     st.info(f"⏰ **Last Refresh (GMT+8):** {last_updated}")
-    
+
     # Auto-refresh logic - check if 300 seconds have passed
     if time_since_refresh >= 300:
         # Update the last refresh time
@@ -238,7 +250,7 @@ def main():
         st.session_state.cached_statuses is None or
         st.session_state.cache_timestamp is None
     )
-    
+
     if should_refresh:
         # Fetch statuses with caching
         all_statuses = asyncio.run(fetch_all_statuses())
@@ -260,7 +272,7 @@ def main():
     gcp_data = all_statuses['gcp']
     azure_data = all_statuses['azure']
     alicloud_data = all_statuses['alicloud']
-            
+
 
     # LLM API Status Section
     st.header("🤖 LLM API Status")
@@ -290,13 +302,13 @@ def main():
 
     # Create columns for LangSmith, LlamaIndex and Dify
     col_langsmith, col_llamaindex, col_dify = st.columns(3)
-    
+
     with col_langsmith:
         st.markdown(create_status_card(langsmith_data), unsafe_allow_html=True)
-    
+
     with col_llamaindex:
         st.markdown(create_status_card(llamaindex_data), unsafe_allow_html=True)
-    
+
     with col_dify:
         st.markdown(create_status_card(dify_data), unsafe_allow_html=True)
 

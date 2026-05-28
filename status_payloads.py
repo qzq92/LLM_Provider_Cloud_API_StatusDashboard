@@ -10,6 +10,7 @@ def build_status_payload(
     status_url: str,
     issue_link: str = DEFAULT_ISSUE_LINK,
 ) -> Dict[str, Any]:
+    """Build a normalized status payload dictionary."""
     return {
         "name": name,
         "status": status,
@@ -24,6 +25,7 @@ def build_operational_payload(
     status_url: str,
     issue_link: str = DEFAULT_ISSUE_LINK,
 ) -> Dict[str, Any]:
+    """Build payload from an operational/disrupted boolean outcome."""
     return build_status_payload(
         name=name,
         status="Operational" if is_operational else "Disrupted",
@@ -33,4 +35,5 @@ def build_operational_payload(
 
 
 def build_unknown_payload(name: str, status_url: str) -> Dict[str, Any]:
+    """Build payload for unknown status results."""
     return build_status_payload(name=name, status="Unknown", status_url=status_url)

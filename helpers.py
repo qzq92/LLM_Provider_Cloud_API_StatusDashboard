@@ -1,25 +1,26 @@
 """
 Helper functions for fetching API and cloud service statuses.
 """
-import time
-import feedparser
-import threading
 import logging
-import requests
+import threading
 from typing import Dict, Any
+
 from bs4 import BeautifulSoup
+import feedparser
+import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+
 from browser_checks import (
+    cleanup_browser_resources,
+    get_alicloud_status as browser_get_alicloud_status,
     get_dify_status as browser_get_dify_status,
     get_gemini_status as browser_get_gemini_status,
-    get_alicloud_status as browser_get_alicloud_status,
-    cleanup_browser_resources,
 )
 from status_payloads import (
+    build_status_payload,
     build_operational_payload,
     build_unknown_payload,
-    build_status_payload,
 )
 # Configure logging for helpers module
 logger = logging.getLogger(__name__)
@@ -29,6 +30,20 @@ _http_session = None
 _request_semaphore = threading.Semaphore(3)
 _request_lock = threading.Lock()
 DEFAULT_HTTP_TIMEOUT = 10
+FETCH_STATUS_ERRORS = (
+    requests.RequestException,
+    KeyError,
+    IndexError,
+    AttributeError,
+    TypeError,
+    ValueError,
+)
+RESOURCE_CLEANUP_ERRORS = (
+    requests.RequestException,
+    OSError,
+    RuntimeError,
+    ValueError,
+)
 
 def get_http_session():
     """Get or create a global HTTP session with proper connection pooling."""
@@ -89,7 +104,7 @@ def cleanup_resources():
             import gc
             gc.collect()
             logger.info("Cleaned up HTTP session and connections")
-        except Exception as e:
+        except RESOURCE_CLEANUP_ERRORS as e:
             logger.warning("Error cleaning up HTTP session: %s", e)
         finally:
             _http_session = None
@@ -126,8 +141,8 @@ async def get_openai_status() -> Dict[str, Any]:
             is_operational = "all impacted services have now fully recovered" in description_lower
             
             return build_operational_payload(name, is_operational, status_url, issue_link)
-    except Exception as e:
-        logger.error(f"Error fetching OpenAI status: {e}")
+    except FETCH_STATUS_ERRORS as e:
+        logger.error("Error fetching OpenAI status: %s", e)
     
     return build_unknown_payload(name, status_url)
 
@@ -154,7 +169,11 @@ async def get_deepseek_status() -> Dict[str, Any]:
         if feed.entries:
             latest_entry = feed.entries[0]
             issue_link = latest_entry.link
-            content = latest_entry.get('content', [{}])[0].get('value', '') if latest_entry.get('content') else ''
+            content = (
+                latest_entry.get("content", [{}])[0].get("value", "")
+                if latest_entry.get("content")
+                else ""
+            )
             
             # Check for operational issues
             content_lower = content.lower()
@@ -163,8 +182,8 @@ async def get_deepseek_status() -> Dict[str, Any]:
             is_operational = True if "resolved" in content_lower else False
             
             return build_operational_payload(name, is_operational, status_url, issue_link)
-    except Exception as e:
-        logger.error(f"Error fetching DeepSeek status: {e}")
+    except FETCH_STATUS_ERRORS as e:
+        logger.error("Error fetching DeepSeek status: %s", e)
     
     return build_unknown_payload(name, status_url)
 
@@ -198,7 +217,7 @@ async def get_langsmith_status() -> Dict[str, Any]:
             # Set to false if any of the keyword exist in description
             is_operational = "resolved" in description_lower or "complete" in description_lower
             return build_operational_payload(name, is_operational, status_url, issue_link)
-    except Exception as e:
+    except FETCH_STATUS_ERRORS as e:
         logging.error("Error fetching LangSmith status: %s", e)
     
     return build_unknown_payload(name, status_url)
@@ -233,13 +252,16 @@ async def get_llamaindex_status() -> Dict[str, Any]:
             text_content = element.get_text().strip().lower()
             key_phrase = "no incidents reported today"
             if key_phrase in text_content:
-                logger.info(f"LlamaIndex: Found required key phrase: {key_phrase} to indicate no issue")
+                logger.info(
+                    "LlamaIndex: Found required key phrase: %s to indicate no issue",
+                    key_phrase,
+                )
                 is_operational = True
                 break
         
         return build_operational_payload(name, is_operational, status_url)
 
-    except Exception as e:
+    except FETCH_STATUS_ERRORS as e:
         logging.error("Error fetching LlamaIndex status: %s", e)
     
     return build_unknown_payload(name, status_url)
@@ -247,9 +269,11 @@ async def get_llamaindex_status() -> Dict[str, Any]:
 
 # Dify status
 def get_dify_status() -> Dict[str, Any]:
+    """Get Dify status via the browser-check implementation."""
     return browser_get_dify_status()
 
 def get_gemini_status() -> Dict[str, Any]:
+    """Get Gemini status via the browser-check implementation."""
     return browser_get_gemini_status()
 
 # Add get perplexity status
@@ -279,11 +303,14 @@ async def get_perplexity_status() -> Dict[str, Any]:
             description = latest_entry.description
             # Check for operational issues
             description_lower = description.lower()
-            is_operational = "resolved" in description_lower and not "api outage" in description_lower
+            is_operational = (
+                "resolved" in description_lower
+                and "api outage" not in description_lower
+            )
             
             return build_operational_payload(name, is_operational, status_url, issue_link)
-    except Exception as e:
-        logger.error(f"Error fetching Perplexity status: {e}")
+    except FETCH_STATUS_ERRORS as e:
+        logger.error("Error fetching Perplexity status: %s", e)
     
     return build_unknown_payload(name, status_url)
 
@@ -315,8 +342,8 @@ async def get_anthropic_status() -> Dict[str, Any]:
             is_operational = "resolved" in description_lower
             
             return build_operational_payload(name, is_operational, status_url, issue_link)
-    except Exception as e:
-        logger.error(f"Error fetching Anthropic status: {e}")
+    except FETCH_STATUS_ERRORS as e:
+        logger.error("Error fetching Anthropic status: %s", e)
     
     return build_unknown_payload(name, status_url)
 
@@ -340,11 +367,13 @@ async def get_gcp_status() -> Dict[str, Any]:
         # GCP Status API endpoint
         rss_url = 'https://status.cloud.google.com/en/feed.atom'
         status_url = 'https://status.cloud.google.com'
-        logger.info(f"Parsing GCP status feed as feedparser object from {rss_url}")
+        logger.info("Parsing GCP status feed as feedparser object from %s", rss_url)
         feed = feedparser.parse(fetch_remote_content(rss_url))
         
         if feed.entries:
-            logger.info("Found feed in GCP, if latest feed shows resolved, means there are no issues")
+            logger.info(
+                "Found feed in GCP, if latest feed shows resolved, means there are no issues"
+            )
             latest_entry = feed.entries[0]
             title = latest_entry.title
             # Check for operational issues based on title name
@@ -352,8 +381,8 @@ async def get_gcp_status() -> Dict[str, Any]:
             is_operational = "resolved:" in title_lower
             
             return build_operational_payload(name, is_operational, status_url)
-    except Exception as e:
-        logger.error(f"Error fetching GCP status: {e}")
+    except FETCH_STATUS_ERRORS as e:
+        logger.error("Error fetching GCP status: %s", e)
     
     return build_unknown_payload(name, status_url)
 
@@ -385,8 +414,8 @@ async def get_azure_status() -> Dict[str, Any]:
         else:
             logger.info("Azure: No feed found, indicates normal status")
             return build_status_payload(name, "Operational", status_url)
-    except Exception as e:
-        logger.error(f"Error fetching Azure status: {e}")
+    except FETCH_STATUS_ERRORS as e:
+        logger.error("Error fetching Azure status: %s", e)
 
     return build_unknown_payload(name, status_url)
 
@@ -419,11 +448,12 @@ async def get_aws_status() -> Dict[str, Any]:
             logger.info("AWS: No feed found, indicates normal status")
             return build_status_payload(name, "Operational", status_url)
 
-    except Exception as e:
-        logger.error(f"Error fetching AWS status: {e}")
+    except FETCH_STATUS_ERRORS as e:
+        logger.error("Error fetching AWS status: %s", e)
     
     return build_unknown_payload(name, status_url)
 
 
 def get_alicloud_status() -> Dict[str, Any]:
+    """Get Alibaba Cloud status via the browser-check implementation."""
     return browser_get_alicloud_status()

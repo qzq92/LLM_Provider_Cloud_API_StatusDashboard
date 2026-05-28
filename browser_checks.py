@@ -8,6 +8,7 @@ import time
 
 import undetected_chromedriver as uc
 from selenium import webdriver
+from selenium.common.exceptions import NoSuchElementException, TimeoutException, WebDriverException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
@@ -27,9 +28,19 @@ BROWSER_TTL_DISRUPTED_SECONDS = 30
 BROWSER_TTL_UNKNOWN_SECONDS = 20
 _browser_status_cache: Dict[str, Dict[str, Any]] = {}
 _browser_cache_lock = threading.Lock()
+DRIVER_CHECK_ERRORS = (
+    WebDriverException,
+    TimeoutException,
+    NoSuchElementException,
+    RuntimeError,
+    OSError,
+    ValueError,
+)
+CLEANUP_BROWSER_ERRORS = (WebDriverException, RuntimeError, OSError, ValueError)
 
 
 def get_cached_browser_status(cache_key: str) -> Union[Dict[str, Any], None]:
+    """Return cached browser-derived status when entry TTL is still valid."""
     with _browser_cache_lock:
         cached_entry = _browser_status_cache.get(cache_key)
         if not cached_entry:
@@ -49,6 +60,7 @@ def get_cached_browser_status(cache_key: str) -> Union[Dict[str, Any], None]:
 
 
 def _resolve_browser_ttl_seconds(status_data: Dict[str, Any]) -> int:
+    """Map status value to adaptive browser-cache TTL seconds."""
     status_value = str(status_data.get("status", "Unknown")).strip().lower()
     if status_value == "operational":
         return BROWSER_TTL_OPERATIONAL_SECONDS
@@ -58,6 +70,7 @@ def _resolve_browser_ttl_seconds(status_data: Dict[str, Any]) -> int:
 
 
 def set_cached_browser_status(cache_key: str, status_data: Dict[str, Any]) -> None:
+    """Store browser-derived status with status-sensitive TTL metadata."""
     ttl_seconds = _resolve_browser_ttl_seconds(status_data)
     with _browser_cache_lock:
         _browser_status_cache[cache_key] = {
@@ -68,12 +81,13 @@ def set_cached_browser_status(cache_key: str, status_data: Dict[str, Any]) -> No
 
 
 def cleanup_browser_resources() -> None:
+    """Close all browser drivers managed by this module."""
     global _chrome_driver_gemini, _chrome_driver_alicloud, _chrome_driver_dify
     if _chrome_driver_gemini is not None:
         try:
             _chrome_driver_gemini.quit()
             logger.info("Cleaned up Gemini Chrome driver")
-        except Exception as e:
+        except CLEANUP_BROWSER_ERRORS as e:
             logger.warning("Error cleaning up Gemini Chrome driver: %s", e)
         finally:
             _chrome_driver_gemini = None
@@ -82,7 +96,7 @@ def cleanup_browser_resources() -> None:
         try:
             _chrome_driver_alicloud.quit()
             logger.info("Cleaned up Alibaba Cloud Chrome driver")
-        except Exception as e:
+        except CLEANUP_BROWSER_ERRORS as e:
             logger.warning("Error cleaning up Alibaba Cloud Chrome driver: %s", e)
         finally:
             _chrome_driver_alicloud = None
@@ -91,13 +105,14 @@ def cleanup_browser_resources() -> None:
         try:
             _chrome_driver_dify.quit()
             logger.info("Cleaned up Dify Chrome driver")
-        except Exception as e:
+        except CLEANUP_BROWSER_ERRORS as e:
             logger.warning("Error cleaning up Dify Chrome driver: %s", e)
         finally:
             _chrome_driver_dify = None
 
 
 def get_dify_status() -> Dict[str, Any]:
+    """Fetch Dify status page state using Selenium with caching."""
     name = "Dify.AI"
     status_url = "https://dify.statuspage.io/"
     cached_result = get_cached_browser_status("dify")
@@ -112,7 +127,7 @@ def get_dify_status() -> Dict[str, Any]:
                 _chrome_driver_dify.current_url
                 driver = _chrome_driver_dify
                 logger.info("Reusing existing Dify Chrome driver instance")
-            except Exception:
+            except DRIVER_CHECK_ERRORS:
                 logger.info("Existing Dify driver is no longer functional, creating new one")
                 _chrome_driver_dify = None
 
@@ -133,7 +148,7 @@ def get_dify_status() -> Dict[str, Any]:
             try:
                 logger.info("Attempting to use undetected_chromedriver for Dify")
                 _chrome_driver_dify = uc.Chrome(options=chrome_options, use_subprocess=True)
-            except Exception as uc_error:
+            except DRIVER_CHECK_ERRORS as uc_error:
                 logger.warning("undetected_chromedriver failed for Dify: %s", uc_error)
                 options = webdriver.ChromeOptions()
                 for arg in [
@@ -152,7 +167,7 @@ def get_dify_status() -> Dict[str, Any]:
                     _chrome_driver_dify = webdriver.Chrome(
                         service=Service(driver_path), options=options
                     )
-                except Exception as cm_error:
+                except DRIVER_CHECK_ERRORS as cm_error:
                     logger.error("ChromeDriverManager also failed for Dify: %s", cm_error)
                     _chrome_driver_dify = None
 
@@ -168,10 +183,10 @@ def get_dify_status() -> Dict[str, Any]:
                                 driver.execute_script("arguments[0].click();", element)
                                 time.sleep(0.3)
                                 break
-                    except Exception as e:
+                    except DRIVER_CHECK_ERRORS as e:
                         logger.debug("Selector %s not found or clickable: %s", selector, e)
                 time.sleep(0.3)
-            except Exception as e:
+            except DRIVER_CHECK_ERRORS as e:
                 logger.warning("Could not find expandable elements: %s", e)
 
             try:
@@ -190,11 +205,11 @@ def get_dify_status() -> Dict[str, Any]:
                 result = build_operational_payload(name, is_operational, status_url)
                 set_cached_browser_status("dify", result)
                 return result
-            except Exception as e:
+            except DRIVER_CHECK_ERRORS as e:
                 logger.warning(
                     "page-status status-none element not found after expansion: %s", e
                 )
-    except Exception as e:
+    except DRIVER_CHECK_ERRORS as e:
         logger.error("Error fetching Dify status: %s", e)
 
     result = build_unknown_payload(name, status_url)
@@ -203,6 +218,7 @@ def get_dify_status() -> Dict[str, Any]:
 
 
 def get_gemini_status() -> Dict[str, Any]:
+    """Fetch Gemini status page state using Selenium with caching."""
     name = "Google AI Studio and Gemini API Status"
     status_url = "https://aistudio.google.com/status"
     cached_result = get_cached_browser_status("gemini")
@@ -217,7 +233,7 @@ def get_gemini_status() -> Dict[str, Any]:
                 _chrome_driver_gemini.current_url
                 driver = _chrome_driver_gemini
                 logger.info("Reusing existing Gemini Chrome driver instance")
-            except Exception:
+            except DRIVER_CHECK_ERRORS:
                 logger.info("Existing Gemini driver is no longer functional, creating new one")
                 _chrome_driver_gemini = None
 
@@ -238,7 +254,7 @@ def get_gemini_status() -> Dict[str, Any]:
                 _chrome_driver_gemini = uc.Chrome(
                     options=chrome_options, use_subprocess=True
                 )
-            except Exception as uc_error:
+            except DRIVER_CHECK_ERRORS as uc_error:
                 logger.warning("undetected_chromedriver failed for Gemini: %s", uc_error)
                 options = webdriver.ChromeOptions()
                 for arg in [
@@ -257,7 +273,7 @@ def get_gemini_status() -> Dict[str, Any]:
                     _chrome_driver_gemini = webdriver.Chrome(
                         service=Service(driver_path), options=options
                     )
-                except Exception as cm_error:
+                except DRIVER_CHECK_ERRORS as cm_error:
                     logger.error("ChromeDriverManager also failed for Gemini: %s", cm_error)
                     _chrome_driver_gemini = None
 
@@ -279,10 +295,10 @@ def get_gemini_status() -> Dict[str, Any]:
                                 driver.execute_script("arguments[0].click();", element)
                                 time.sleep(0.3)
                                 break
-                    except Exception as e:
+                    except DRIVER_CHECK_ERRORS as e:
                         logger.debug("Selector %s not found or clickable: %s", selector, e)
                 time.sleep(0.3)
-            except Exception as e:
+            except DRIVER_CHECK_ERRORS as e:
                 logger.warning("Could not find expandable elements: %s", e)
 
             try:
@@ -298,9 +314,9 @@ def get_gemini_status() -> Dict[str, Any]:
                 result = build_operational_payload(name, is_operational, status_url)
                 set_cached_browser_status("gemini", result)
                 return result
-            except Exception as e:
+            except DRIVER_CHECK_ERRORS as e:
                 logger.warning("status-large operational element not found: %s", e)
-    except Exception as e:
+    except DRIVER_CHECK_ERRORS as e:
         logger.error("Error fetching Gemini status: %s", e)
 
     result = build_unknown_payload(name, status_url)
@@ -309,6 +325,7 @@ def get_gemini_status() -> Dict[str, Any]:
 
 
 def get_alicloud_status() -> Dict[str, Any]:
+    """Fetch Alibaba Cloud status page state using Selenium with caching."""
     name = "Alibaba Cloud Health Status"
     status_url = "https://status.alibabacloud.com"
     cached_result = get_cached_browser_status("alicloud")
@@ -322,7 +339,7 @@ def get_alicloud_status() -> Dict[str, Any]:
             try:
                 _chrome_driver_alicloud.current_url
                 driver = _chrome_driver_alicloud
-            except Exception:
+            except DRIVER_CHECK_ERRORS:
                 _chrome_driver_alicloud = None
 
         if _chrome_driver_alicloud is None:
@@ -342,7 +359,7 @@ def get_alicloud_status() -> Dict[str, Any]:
                 _chrome_driver_alicloud = uc.Chrome(
                     options=chrome_options, use_subprocess=True
                 )
-            except Exception as uc_error:
+            except DRIVER_CHECK_ERRORS as uc_error:
                 logger.warning("undetected_chromedriver failed for Alibaba Cloud: %s", uc_error)
                 options = webdriver.ChromeOptions()
                 for arg in [
@@ -363,7 +380,7 @@ def get_alicloud_status() -> Dict[str, Any]:
                     _chrome_driver_alicloud = webdriver.Chrome(
                         service=Service(driver_path), options=options
                     )
-                except Exception as cm_error:
+                except DRIVER_CHECK_ERRORS as cm_error:
                     logger.error(
                         "ChromeDriverManager also failed for Alibaba Cloud: %s", cm_error
                     )
@@ -382,10 +399,10 @@ def get_alicloud_status() -> Dict[str, Any]:
                                 driver.execute_script("arguments[0].click();", element)
                                 time.sleep(0.3)
                                 break
-                    except Exception as e:
+                    except DRIVER_CHECK_ERRORS as e:
                         logger.debug("Selector %s not found or clickable: %s", selector, e)
                 time.sleep(0.5)
-            except Exception as e:
+            except DRIVER_CHECK_ERRORS as e:
                 logger.warning("Could not find expandable elements: %s", e)
 
             try:
@@ -398,9 +415,9 @@ def get_alicloud_status() -> Dict[str, Any]:
                 result = build_operational_payload(name, is_operational, status_url)
                 set_cached_browser_status("alicloud", result)
                 return result
-            except Exception as e:
+            except DRIVER_CHECK_ERRORS as e:
                 logger.error("Error parsing Alibaba Cloud status: %s", e)
-    except Exception as e:
+    except DRIVER_CHECK_ERRORS as e:
         logger.error("Error getting Alibaba Cloud status from url %s: %s", status_url, e)
 
     result = build_unknown_payload(name, status_url)
