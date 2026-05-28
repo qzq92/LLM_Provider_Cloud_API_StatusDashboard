@@ -112,6 +112,26 @@ def cleanup_browser_resources() -> None:
             _STATE["chrome_driver_dify"] = None
 
 
+def _create_chrome_driver_with_fallback(options: Options) -> Union[webdriver.Chrome, None]:
+    """Create Chrome driver using Selenium Manager first, then webdriver-manager."""
+    try:
+        # Selenium Manager (Selenium >= 4.6) resolves a browser-compatible driver.
+        logger.info("Attempting Selenium Manager Chrome driver resolution")
+        return webdriver.Chrome(options=options)
+    except DRIVER_CHECK_ERRORS as selenium_manager_error:
+        logger.warning(
+            "Selenium Manager driver resolution failed: %s", selenium_manager_error
+        )
+
+    try:
+        driver_path = ChromeDriverManager().install()
+        logger.info("ChromeDriver available at: %s", driver_path)
+        return webdriver.Chrome(service=Service(driver_path), options=options)
+    except DRIVER_CHECK_ERRORS as manager_error:
+        logger.error("webdriver-manager fallback failed: %s", manager_error)
+        return None
+
+
 def get_dify_status() -> Dict[str, Any]:
     """Fetch Dify status page state using Selenium with caching."""
     name = "Dify.AI"
@@ -163,15 +183,9 @@ def get_dify_status() -> Dict[str, Any]:
                     "--disable-javascript",
                 ]:
                     options.add_argument(arg)
-                try:
-                    driver_path = ChromeDriverManager().install()
-                    logger.info("ChromeDriver available at: %s", driver_path)
-                    _STATE["chrome_driver_dify"] = webdriver.Chrome(
-                        service=Service(driver_path), options=options
-                    )
-                except DRIVER_CHECK_ERRORS as cm_error:
-                    logger.error("ChromeDriverManager also failed for Dify: %s", cm_error)
-                    _STATE["chrome_driver_dify"] = None
+                _STATE["chrome_driver_dify"] = _create_chrome_driver_with_fallback(
+                    options
+                )
 
         driver = _STATE["chrome_driver_dify"]
         if driver is not None:
@@ -268,15 +282,9 @@ def get_gemini_status() -> Dict[str, Any]:
                     "--disable-javascript",
                 ]:
                     options.add_argument(arg)
-                try:
-                    driver_path = ChromeDriverManager().install()
-                    logger.info("ChromeDriver available at: %s", driver_path)
-                    _STATE["chrome_driver_gemini"] = webdriver.Chrome(
-                        service=Service(driver_path), options=options
-                    )
-                except DRIVER_CHECK_ERRORS as cm_error:
-                    logger.error("ChromeDriverManager also failed for Gemini: %s", cm_error)
-                    _STATE["chrome_driver_gemini"] = None
+                _STATE["chrome_driver_gemini"] = _create_chrome_driver_with_fallback(
+                    options
+                )
 
         driver = _STATE["chrome_driver_gemini"]
         if driver is not None:
@@ -374,17 +382,9 @@ def get_alicloud_status() -> Dict[str, Any]:
                     "--remote-debugging-port=9222",
                 ]:
                     options.add_argument(arg)
-                try:
-                    driver_path = ChromeDriverManager().install()
-                    logger.info("ChromeDriver available at: %s", driver_path)
-                    _STATE["chrome_driver_alicloud"] = webdriver.Chrome(
-                        service=Service(driver_path), options=options
-                    )
-                except DRIVER_CHECK_ERRORS as cm_error:
-                    logger.error(
-                        "ChromeDriverManager also failed for Alibaba Cloud: %s", cm_error
-                    )
-                    _STATE["chrome_driver_alicloud"] = None
+                _STATE["chrome_driver_alicloud"] = _create_chrome_driver_with_fallback(
+                    options
+                )
 
         driver = _STATE["chrome_driver_alicloud"]
         if driver is not None:
