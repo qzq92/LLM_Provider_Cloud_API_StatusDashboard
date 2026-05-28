@@ -2,7 +2,6 @@
 LLM APIs & Cloud Services Status Dashboard
 A Streamlit application for monitoring API and cloud service statuses.
 """
-import time
 import asyncio
 import pytz
 import logging
@@ -124,9 +123,9 @@ def create_status_card(service_data: dict, include_details=True) -> str:
     return card_content
 
 
-def run_gemini_status():
-    """Wrapper function to run async Gemini status in thread pool."""
-    return asyncio.run(get_gemini_status())
+def _run_async_status_checker(checker):
+    """Run an async checker in an isolated event loop inside a worker thread."""
+    return asyncio.run(checker())
 
 async def fetch_all_statuses():
     """Fetch all statuses concurrently using asyncio.gather()."""
@@ -139,20 +138,20 @@ async def fetch_all_statuses():
     status_text.text("🚀 Starting concurrent status checks...")
     
     try:
-        # Use asyncio.gather() to run all status functions concurrently
-        # Note: get_gemini_status is now synchronous, so we run it in a thread
+        # Run all status checks in worker threads to avoid blocking the event loop
+        # (many helpers use blocking I/O like requests/feedparser/selenium).
         results = await asyncio.gather(
-            get_openai_status(),
-            get_deepseek_status(),
+            asyncio.to_thread(_run_async_status_checker, get_openai_status),
+            asyncio.to_thread(_run_async_status_checker, get_deepseek_status),
             asyncio.to_thread(get_gemini_status),  # Run sync function in thread
-            get_anthropic_status(),
-            get_perplexity_status(),
-            get_langsmith_status(),
-            get_llamaindex_status(),
+            asyncio.to_thread(_run_async_status_checker, get_anthropic_status),
+            asyncio.to_thread(_run_async_status_checker, get_perplexity_status),
+            asyncio.to_thread(_run_async_status_checker, get_langsmith_status),
+            asyncio.to_thread(_run_async_status_checker, get_llamaindex_status),
             asyncio.to_thread(get_dify_status),  # Run sync function in thread
-            get_aws_status(),
-            get_gcp_status(),
-            get_azure_status(),
+            asyncio.to_thread(_run_async_status_checker, get_aws_status),
+            asyncio.to_thread(_run_async_status_checker, get_gcp_status),
+            asyncio.to_thread(_run_async_status_checker, get_azure_status),
             asyncio.to_thread(get_alicloud_status),  # Run sync function in thread
             return_exceptions=True  # Don't fail if one service fails
         )
@@ -205,6 +204,11 @@ def main():
     logger.info("Starting Dashboard")
     
     st.title("📊 LLM APIs & Cloud Services Status Dashboard (refresh every 5 minutes)")
+    # Client-side auto refresh every 5 minutes (non-blocking on server thread).
+    st.markdown(
+        "<meta http-equiv='refresh' content='300'>",
+        unsafe_allow_html=True
+    )
 
     # Get current time for display
     gmt_plus_8_timezone = pytz.timezone('Asia/Singapore')
@@ -337,11 +341,6 @@ def main():
     #         "Cloud Services": cloud_services,
     #         "Last Refresh in GMT+8": datetime.now(tz=gmt_plus_8_timezone).strftime('%d-%m-%Y %H:%M:%S')
     #     })
-    
-    # Auto-refresh mechanism at the end of the function
-    time.sleep(300)  # Wait 300 second
-    st.rerun()
-
 if __name__ == "__main__":
     try:
         main()

@@ -2,7 +2,7 @@
 name = "llm-provider-cloud-api-status-dashboard"
 version = "0.1.0"
 description = "A Streamlit dashboard for monitoring LLM API and cloud service statuses"
-requires-python = ">=3.11"
+requires-python = "==3.12.*"
 dependencies = [
     "streamlit>=1.28.0",
     "requests>=2.31.0",
@@ -12,5 +12,4 @@ dependencies = [
     "undetected-chromedriver==3.5.5",
     "selenium>=4.15.0",
     "webdriver-manager==4.0.2",
-    "setuptools==80.9.0",
 ]

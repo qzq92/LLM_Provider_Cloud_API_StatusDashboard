@@ -22,6 +22,7 @@ import undetected_chromedriver as uc
 import pytz
 import time
 import asyncio
+import threading
 # Configure logging for helpers module
 logger = logging.getLogger(__name__)
 # Globals
@@ -35,6 +36,15 @@ _chrome_driver_dify = None
 
 # Global session for HTTP requests to avoid connection pool issues
 _http_session = None
+_request_semaphore = threading.Semaphore(3)
+_request_lock = threading.Lock()
+DEFAULT_HTTP_TIMEOUT = 10
+# Adaptive TTL for browser-derived checks (freshness vs heavy Selenium cost).
+BROWSER_TTL_OPERATIONAL_SECONDS = 120
+BROWSER_TTL_DISRUPTED_SECONDS = 30
+BROWSER_TTL_UNKNOWN_SECONDS = 20
+_browser_status_cache: Dict[str, Dict[str, Any]] = {}
+_browser_cache_lock = threading.Lock()
 
 def get_http_session():
     """Get or create a global HTTP session with proper connection pooling."""
@@ -60,18 +70,66 @@ def get_http_session():
         _http_session.mount("http://", adapter)
         _http_session.mount("https://", adapter)
         
-        # Set timeout for all requests
-        _http_session.timeout = 10
-        
         # Add connection limits to prevent resource exhaustion
         _http_session.headers.update({
             'Connection': 'keep-alive',
-            'Keep-Alive': 'timeout=5, max=10'
+            'Keep-Alive': 'timeout=5, max=10',
+            'User-Agent': 'LLM-Status-Dashboard/1.0'
         })
         
         logger.info("Created new HTTP session with optimized connection pooling")
     
     return _http_session
+
+
+def fetch_remote_content(url: str) -> bytes:
+    """Fetch remote content with shared session and bounded concurrency."""
+    with _request_semaphore:
+        session = get_http_session()
+        response = session.get(url, timeout=DEFAULT_HTTP_TIMEOUT)
+        response.raise_for_status()
+        return response.content
+
+
+def get_cached_browser_status(cache_key: str) -> Union[Dict[str, Any], None]:
+    """Return cached browser-derived status if still fresh."""
+    with _browser_cache_lock:
+        cached_entry = _browser_status_cache.get(cache_key)
+        if not cached_entry:
+            return None
+        age_seconds = time.monotonic() - cached_entry["timestamp"]
+        ttl_seconds = cached_entry.get("ttl_seconds", BROWSER_TTL_OPERATIONAL_SECONDS)
+        if age_seconds <= ttl_seconds:
+            logger.info(
+                "Using cached browser status for %s (age %.1fs / ttl %ss)",
+                cache_key,
+                age_seconds,
+                ttl_seconds
+            )
+            return cached_entry["data"]
+        _browser_status_cache.pop(cache_key, None)
+        return None
+
+
+def _resolve_browser_ttl_seconds(status_data: Dict[str, Any]) -> int:
+    """Compute adaptive browser TTL based on status criticality."""
+    status_value = str(status_data.get("status", "Unknown")).strip().lower()
+    if status_value == "operational":
+        return BROWSER_TTL_OPERATIONAL_SECONDS
+    if status_value == "disrupted":
+        return BROWSER_TTL_DISRUPTED_SECONDS
+    return BROWSER_TTL_UNKNOWN_SECONDS
+
+
+def set_cached_browser_status(cache_key: str, status_data: Dict[str, Any]) -> None:
+    """Store browser-derived status in adaptive TTL cache."""
+    ttl_seconds = _resolve_browser_ttl_seconds(status_data)
+    with _browser_cache_lock:
+        _browser_status_cache[cache_key] = {
+            "timestamp": time.monotonic(),
+            "data": status_data,
+            "ttl_seconds": ttl_seconds
+        }
 
 def get_lightweight_session():
     """Get a lightweight HTTP session for individual requests to avoid connection pool issues."""
@@ -247,10 +305,7 @@ async def get_openai_status() -> Dict[str, Any]:
     try:
         rss_url = 'https://status.openai.com/feed.rss'
         status_url = 'https://status.openai.com'
-        session = get_lightweight_session()
-        response = session.get(rss_url)
-        feed = feedparser.parse(response.content)
-        session.close()  # Close immediately after use
+        feed = feedparser.parse(fetch_remote_content(rss_url))
         
         if feed.entries:
             latest_entry = feed.entries[0]
@@ -304,9 +359,7 @@ async def get_deepseek_status() -> Dict[str, Any]:
     try:
         rss_url = 'https://status.deepseek.com/history.atom'
         status_url = 'https://status.deepseek.com'
-        session = get_http_session()
-        response = session.get(rss_url)
-        feed = feedparser.parse(response.content)
+        feed = feedparser.parse(fetch_remote_content(rss_url))
         
         if feed.entries:
             latest_entry = feed.entries[0]
@@ -363,7 +416,7 @@ async def get_langsmith_status() -> Dict[str, Any]:
     try:
         rss_url = 'https://status.smith.langchain.com/feed.rss'
         status_url = 'https://status.smith.langchain.com'
-        feed = feedparser.parse(rss_url)
+        feed = feedparser.parse(fetch_remote_content(rss_url))
         
         if feed.entries:
             latest_entry = feed.entries[0]
@@ -420,13 +473,7 @@ async def get_llamaindex_status() -> Dict[str, Any]:
     status_url = 'https://llamaindex.statuspage.io/'
 
     try:
-        # Use session to fetch the status page
-        session = get_http_session()
-        response = session.get(status_url)
-        response.raise_for_status()
-        
-        # Parse the HTML content
-        soup = BeautifulSoup(response.content, 'html.parser')
+        soup = BeautifulSoup(fetch_remote_content(status_url), 'html.parser')
         
         # Look for the nested <p class="color-secondary"> element
         color_secondary_elements = soup.find_all('p', class_='color-secondary')
@@ -478,6 +525,9 @@ def get_dify_status() -> Dict[str, Any]:
     """
     name = "Dify.AI"
     status_url = 'https://dify.statuspage.io/'
+    cached_result = get_cached_browser_status("dify")
+    if cached_result is not None:
+        return cached_result
     
     # Use dedicated Dify Chrome driver instance to prevent interference
     global _chrome_driver_dify
@@ -553,7 +603,7 @@ def get_dify_status() -> Dict[str, Any]:
             # Navigate to the status page
             driver.get(status_url)
             # Wait for the page to load
-            wait = WebDriverWait(driver, 15)
+            wait = WebDriverWait(driver, 10)
 
             # Try to find and click expandable elements to reveal the status
             try:
@@ -570,14 +620,14 @@ def get_dify_status() -> Dict[str, Any]:
                             if element.is_displayed() and element.is_enabled():
                                 logger.info(f"Dify: Found expandable element: {selector}")
                                 driver.execute_script("arguments[0].click();", element)
-                                time.sleep(1)  # Wait for expansion
+                                time.sleep(0.3)  # Brief wait for expansion
                                 break
                     except Exception as e:
                         logger.debug(f"Selector {selector} not found or clickable: {e}")
                         continue
                 
                 # Additional wait for content to expand after clicking
-                time.sleep(1)
+                time.sleep(0.3)
                 
             except Exception as e:
                 logger.warning(f"Could not find expandable elements: {e}")
@@ -608,12 +658,14 @@ def get_dify_status() -> Dict[str, Any]:
                 if not is_operational:
                     logger.info("Dify: No required key phrase found - status is Disrupted")
                 
-                return {
+                result = {
                     "name": name,
                     "status": "Operational" if is_operational else "Disrupted",
                     "status_url": status_url,
                     "issue_link": "Refer to status page as no specific link is available"
                 }
+                set_cached_browser_status("dify", result)
+                return result
                 
             except Exception as e:
                 logger.warning(f"page-status status-none element not found after expansion: {e}")
@@ -621,12 +673,14 @@ def get_dify_status() -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Error fetching Dify status: {e}")
     
-    return {
+    result = {
         "name": name,
         "status": "Unknown",
         "status_url": status_url,
         "issue_link": "Refer to status page as no specific link is available"
     }
+    set_cached_browser_status("dify", result)
+    return result
 
 def get_gemini_status() -> Dict[str, Any]:
     """
@@ -647,6 +701,9 @@ def get_gemini_status() -> Dict[str, Any]:
     """
     name = "Google AI Studio and Gemini API Status"
     status_url = 'https://aistudio.google.com/status'
+    cached_result = get_cached_browser_status("gemini")
+    if cached_result is not None:
+        return cached_result
     
     # Use dedicated Gemini Chrome driver instance to prevent interference
     global _chrome_driver_gemini
@@ -724,7 +781,7 @@ def get_gemini_status() -> Dict[str, Any]:
             # Navigate to the status page
             driver.get(status_url)
             # Wait for the page to load
-            wait = WebDriverWait(driver, 15)
+            wait = WebDriverWait(driver, 10)
             
             # Wait for the main app-root element to be present first
             wait.until(EC.presence_of_element_located((By.TAG_NAME, "app-root")))
@@ -748,14 +805,14 @@ def get_gemini_status() -> Dict[str, Any]:
                             if element.is_displayed() and element.is_enabled():
                                 logger.info(f"Gemini: Found expandable element: {selector}")
                                 driver.execute_script("arguments[0].click();", element)
-                                time.sleep(1)  # Wait for expansion
+                                time.sleep(0.3)  # Brief wait for expansion
                                 break
                     except Exception as e:
                         logger.debug(f"Selector {selector} not found or clickable: {e}")
                         continue
                 
                 # Additional wait for content to expand after clicking
-                time.sleep(1)
+                time.sleep(0.3)
                 
             except Exception as e:
                 logger.warning(f"Could not find expandable elements: {e}")
@@ -784,24 +841,28 @@ def get_gemini_status() -> Dict[str, Any]:
                     else:
                         logger.info("Gemini: No required key phrase found - status is Disrupted")
                     
-                return {
+                result = {
                     "name": name,
                     "status": "Operational" if is_operational else "Disrupted",
                     "status_url": status_url,
                     "issue_link": "Refer to status page as no specific link is available"
                 }
+                set_cached_browser_status("gemini", result)
+                return result
             except Exception as e:
                 logger.warning(f"status-large operational element not found after expansion: {e}")
     
     except Exception as e:
         logger.error(f"Error fetching Gemini status: {e}")
     
-    return {
+    result = {
         "name": name,
         "status": "Unknown",
         "status_url": status_url,
         "issue_link": "Refer to status page as no specific link is available"
     }
+    set_cached_browser_status("gemini", result)
+    return result
 
 # Add get perplexity status
 async def get_perplexity_status() -> Dict[str, Any]:
@@ -822,7 +883,7 @@ async def get_perplexity_status() -> Dict[str, Any]:
     try:
         rss_url = 'https://status.perplexity.com/history.rss'
         status_url = 'https://status.perplexity.com'
-        feed = feedparser.parse(rss_url)
+        feed = feedparser.parse(fetch_remote_content(rss_url))
         
         if feed.entries:
             latest_entry = feed.entries[0]
@@ -851,7 +912,7 @@ async def get_perplexity_status() -> Dict[str, Any]:
         "name": name,
         "status": "Unknown",
         "status_url": status_url,
-        "issue_link": issue_link
+        "issue_link": "Refer to status page as no specific link is available"
         # "last_update": "N/A",
         # "title": "Error",
         # "description": "Unable to fetch status"
@@ -875,7 +936,7 @@ async def get_anthropic_status() -> Dict[str, Any]:
     try:
         rss_url = 'https://status.anthropic.com/history.rss'
         status_url = 'https://status.anthropic.com'
-        feed = feedparser.parse(rss_url)
+        feed = feedparser.parse(fetch_remote_content(rss_url))
         
         if feed.entries:
             latest_entry = feed.entries[0]
@@ -932,7 +993,7 @@ async def get_gcp_status() -> Dict[str, Any]:
         rss_url = 'https://status.cloud.google.com/en/feed.atom'
         status_url = 'https://status.cloud.google.com'
         logger.info(f"Parsing GCP status feed as feedparser object from {rss_url}")
-        feed = feedparser.parse(rss_url)
+        feed = feedparser.parse(fetch_remote_content(rss_url))
         
         if feed.entries:
             logger.info("Found feed in GCP, if latest feed shows resolved, means there are no issues")
@@ -980,7 +1041,7 @@ async def get_azure_status() -> Dict[str, Any]:
         rss_url = 'https://rssfeed.azure.status.microsoft/en-us/status/feed/'
         status_url = 'https://status.azure.com'
         logger.info("Parsing Azure status feed as feedparser object")
-        feed = feedparser.parse(rss_url)
+        feed = feedparser.parse(fetch_remote_content(rss_url))
         #logger.info(f"Feed: {feed}")
         if feed.entries:
             logger.info("Found feed in Azure, indicates ongoing issues")
@@ -1029,7 +1090,7 @@ async def get_aws_status() -> Dict[str, Any]:
         rss_url = 'https://status.aws.amazon.com/rss/all.rss'
         status_url = 'https://health.aws.amazon.com/health/status'
         logger.info("Parsing AWS status feed as feedparser object")
-        feed = feedparser.parse(rss_url)
+        feed = feedparser.parse(fetch_remote_content(rss_url))
         #logger.info(f"Feed: {feed}")
         if feed.entries:
             logger.info("Found feed in AWS, indicates ongoing issues")
@@ -1079,6 +1140,9 @@ def get_alicloud_status() -> Dict[str, Any]:
     """
     name = "Alibaba Cloud Health Status"
     status_url = 'https://status.alibabacloud.com'
+    cached_result = get_cached_browser_status("alicloud")
+    if cached_result is not None:
+        return cached_result
     
     # Use dedicated Alibaba Cloud Chrome driver instance to prevent interference
     global _chrome_driver_alicloud
@@ -1164,7 +1228,7 @@ def get_alicloud_status() -> Dict[str, Any]:
             # Navigate to the status page
             driver.get(status_url)
             # Wait for the page to load
-            wait = WebDriverWait(driver, 15)
+            wait = WebDriverWait(driver, 10)
             
             # Wait for the main container to be present first
             wait.until(EC.presence_of_element_located((By.ID, "container")))
@@ -1186,14 +1250,14 @@ def get_alicloud_status() -> Dict[str, Any]:
                             if element.is_displayed() and element.is_enabled():
                                 logger.info(f"Found expandable element: {selector}")
                                 driver.execute_script("arguments[0].click();", element)
-                                time.sleep(1)  # Wait for expansion
+                                time.sleep(0.3)  # Brief wait for expansion
                                 break
                     except Exception as e:
                         logger.debug(f"Selector {selector} not found or clickable: {e}")
                         continue
                 
                 # Additional wait for content to expand after clicking
-                time.sleep(2)
+                time.sleep(0.5)
                 
             except Exception as e:
                 logger.warning(f"Could not find expandable elements: {e}")
@@ -1217,30 +1281,36 @@ def get_alicloud_status() -> Dict[str, Any]:
                 else:
                     logger.info("Alibaba Cloud: No required key phrase found - status is Disrupted")
                 
-                return {
+                result = {
                     "name": name,
                     "status": "Operational" if is_operational else "Disrupted",
                     "status_url": status_url,
                     "issue_link": "Refer to status page as no specific link is available"
                 }
+                set_cached_browser_status("alicloud", result)
+                return result
                 
             except Exception as e:
                 logger.error(f"Error parsing Alibaba Cloud status: {e}")
-                return {
+                result = {
                     "name": name,
                     "status": "Unknown",
                     "status_url": status_url,
                     "issue_link": "Refer to status page as no specific link is available"
                 }
+                set_cached_browser_status("alicloud", result)
+                return result
         
     except Exception as e:
         logger.error(f"Error getting Alibaba Cloud status from url: {status_url}. Error: {e}")
     
     # If we reach here, Chrome method failed
     logger.warning("Chrome method failed for Alibaba Cloud status, returning error status")
-    return {
+    result = {
         "name": name,
         "status": "Unknown",
         "status_url": status_url,
         "issue_link": "Refer to status page as no specific link is available"
     }
+    set_cached_browser_status("alicloud", result)
+    return result
