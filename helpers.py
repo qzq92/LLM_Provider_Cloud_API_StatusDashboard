@@ -3,6 +3,7 @@ Helper functions for fetching API and cloud service statuses.
 """
 import logging
 import threading
+import gc
 from typing import Dict, Any
 
 from bs4 import BeautifulSoup
@@ -97,7 +98,6 @@ def cleanup_resources():
             # Close all connections in the pool
             _STATE["http_session"].close()
             # Force garbage collection of connections
-            import gc
             gc.collect()
             logger.info("Cleaned up HTTP session and connections")
         except RESOURCE_CLEANUP_ERRORS as e:
@@ -171,7 +171,7 @@ async def get_deepseek_status() -> Dict[str, Any]:
             # Check for operational issues
             content_lower = content.lower()
             # Look for specific keywords in the content
-            is_operational = True if "resolved" in content_lower else False
+            is_operational = "resolved" in content_lower
             return build_operational_payload(name, is_operational, status_url, issue_link)
     except FETCH_STATUS_ERRORS as e:
         logger.error("Error fetching DeepSeek status: %s", e)
@@ -354,7 +354,7 @@ async def get_gcp_status() -> Dict[str, Any]:
         status_url = 'https://status.cloud.google.com'
         logger.info("Parsing GCP status feed as feedparser object from %s", rss_url)
         feed = feedparser.parse(fetch_remote_content(rss_url))
-        
+
         if feed.entries:
             logger.info(
                 "Found feed in GCP, if latest feed shows resolved, means there are no issues"
@@ -364,11 +364,11 @@ async def get_gcp_status() -> Dict[str, Any]:
             # Check for operational issues based on title name
             title_lower = title.lower()
             is_operational = "resolved:" in title_lower
-            
+
             return build_operational_payload(name, is_operational, status_url)
     except FETCH_STATUS_ERRORS as e:
         logger.error("Error fetching GCP status: %s", e)
-    
+
     return build_unknown_payload(name, status_url)
 
 async def get_azure_status() -> Dict[str, Any]:
