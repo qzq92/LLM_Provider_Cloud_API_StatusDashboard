@@ -49,6 +49,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 uv sync
 uv run streamlit run app_main.py
 ```
+Do not run `uv run app_main.py` directly; always launch through Streamlit.
 
 Windows (recommended for enterprise/network TLS interception):
 ```powershell
