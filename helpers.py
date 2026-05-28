@@ -3,41 +3,32 @@ Helper functions for fetching API and cloud service statuses.
 """
 import time
 import feedparser
-import undetected_chromedriver as uc
 import threading
-import subprocess
-import re
 import logging
 import requests
-from typing import Union, Dict, Any
+from typing import Dict, Any
 from bs4 import BeautifulSoup
-from webdriver_manager.chrome import ChromeDriverManager
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.support.ui import WebDriverWait
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+from browser_checks import (
+    get_dify_status as browser_get_dify_status,
+    get_gemini_status as browser_get_gemini_status,
+    get_alicloud_status as browser_get_alicloud_status,
+    cleanup_browser_resources,
+)
+from status_payloads import (
+    build_operational_payload,
+    build_unknown_payload,
+    build_status_payload,
+)
 # Configure logging for helpers module
 logger = logging.getLogger(__name__)
-# Global ChromeDriver instances to prevent multiple creations
-_chrome_driver_gemini = None
-_chrome_driver_alicloud = None
-_chrome_driver_dify = None
 
 # Global session for HTTP requests to avoid connection pool issues
 _http_session = None
 _request_semaphore = threading.Semaphore(3)
 _request_lock = threading.Lock()
 DEFAULT_HTTP_TIMEOUT = 10
-# Adaptive TTL for browser-derived checks (freshness vs heavy Selenium cost).
-BROWSER_TTL_OPERATIONAL_SECONDS = 120
-BROWSER_TTL_DISRUPTED_SECONDS = 30
-BROWSER_TTL_UNKNOWN_SECONDS = 20
-_browser_status_cache: Dict[str, Dict[str, Any]] = {}
-_browser_cache_lock = threading.Lock()
 
 def get_http_session():
     """Get or create a global HTTP session with proper connection pooling."""
@@ -84,91 +75,10 @@ def fetch_remote_content(url: str) -> bytes:
         return response.content
 
 
-def get_cached_browser_status(cache_key: str) -> Union[Dict[str, Any], None]:
-    """Return cached browser-derived status if still fresh."""
-    with _browser_cache_lock:
-        cached_entry = _browser_status_cache.get(cache_key)
-        if not cached_entry:
-            return None
-        age_seconds = time.monotonic() - cached_entry["timestamp"]
-        ttl_seconds = cached_entry.get("ttl_seconds", BROWSER_TTL_OPERATIONAL_SECONDS)
-        if age_seconds <= ttl_seconds:
-            logger.info(
-                "Using cached browser status for %s (age %.1fs / ttl %ss)",
-                cache_key,
-                age_seconds,
-                ttl_seconds
-            )
-            return cached_entry["data"]
-        _browser_status_cache.pop(cache_key, None)
-        return None
-
-
-def _resolve_browser_ttl_seconds(status_data: Dict[str, Any]) -> int:
-    """Compute adaptive browser TTL based on status criticality."""
-    status_value = str(status_data.get("status", "Unknown")).strip().lower()
-    if status_value == "operational":
-        return BROWSER_TTL_OPERATIONAL_SECONDS
-    if status_value == "disrupted":
-        return BROWSER_TTL_DISRUPTED_SECONDS
-    return BROWSER_TTL_UNKNOWN_SECONDS
-
-
-def set_cached_browser_status(cache_key: str, status_data: Dict[str, Any]) -> None:
-    """Store browser-derived status in adaptive TTL cache."""
-    ttl_seconds = _resolve_browser_ttl_seconds(status_data)
-    with _browser_cache_lock:
-        _browser_status_cache[cache_key] = {
-            "timestamp": time.monotonic(),
-            "data": status_data,
-            "ttl_seconds": ttl_seconds
-        }
-
-def get_lightweight_session():
-    """Get a lightweight HTTP session for individual requests to avoid connection pool issues."""
-    session = requests.Session()
-    session.timeout = 10
-    session.headers.update({
-        'User-Agent': (
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
-            '(KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        )
-    })
-    return session
-
 def cleanup_resources():
     """Clean up global resources to prevent connection pool issues."""
-    global _chrome_driver_gemini, _chrome_driver_alicloud, _chrome_driver_dify, _http_session
-    
-    # Clean up Gemini Chrome driver
-    if _chrome_driver_gemini is not None:
-        try:
-            _chrome_driver_gemini.quit()
-            logger.info("Cleaned up Gemini Chrome driver")
-        except Exception as e:
-            logger.warning(f"Error cleaning up Gemini Chrome driver: {e}")
-        finally:
-            _chrome_driver_gemini = None
-    
-    # Clean up Alibaba Cloud Chrome driver
-    if _chrome_driver_alicloud is not None:
-        try:
-            _chrome_driver_alicloud.quit()
-            logger.info("Cleaned up Alibaba Cloud Chrome driver")
-        except Exception as e:
-            logger.warning(f"Error cleaning up Alibaba Cloud Chrome driver: {e}")
-        finally:
-            _chrome_driver_alicloud = None
-    
-    # Clean up Dify Chrome driver
-    if _chrome_driver_dify is not None:
-        try:
-            _chrome_driver_dify.quit()
-            logger.info("Cleaned up Dify Chrome driver")
-        except Exception as e:
-            logger.warning(f"Error cleaning up Dify Chrome driver: {e}")
-        finally:
-            _chrome_driver_dify = None
+    global _http_session
+    cleanup_browser_resources()
     
     # Clean up HTTP session with aggressive connection cleanup
     if _http_session is not None:
@@ -180,48 +90,9 @@ def cleanup_resources():
             gc.collect()
             logger.info("Cleaned up HTTP session and connections")
         except Exception as e:
-            logger.warning(f"Error cleaning up HTTP session: {e}")
+            logger.warning("Error cleaning up HTTP session: %s", e)
         finally:
             _http_session = None
-
-def get_chrome_version()-> Union[int, None]:
-    """
-    Detect the installed Chrome browser version.
-    
-    Returns:
-        int: Major version number of Chrome, or None if unable to detect
-    """
-    try:
-        # Try common Chrome binary locations for different OS
-        chrome_commands = [
-            ['google-chrome', '--version'],
-            ['google-chrome-stable', '--version'],
-            ['chromium', '--version'],
-            ['chromium-browser', '--version'],
-            ['/usr/bin/chromium', '--version'],  # Streamlit Cloud path
-            ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '--version'],  # macOS
-            ['chrome', '--version'],
-        ]
-        
-        for cmd in chrome_commands:
-            try:
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
-                if result.returncode == 0:
-                    # Parse version from output like "Google Chrome 140.0.7339.207"
-                    version_text = result.stdout.strip()
-                    version_match = re.search(r'(\d+)\.', version_text)
-                    if version_match:
-                        major_version = int(version_match.group(1))
-                        logger.info(f"Detected Chrome version: {major_version} from output: {version_text}")
-                        return major_version
-            except (subprocess.SubprocessError, FileNotFoundError):
-                continue
-        
-        logger.warning("Could not detect Chrome version, will let undetected_chromedriver auto-detect")
-        return None
-    except Exception as e:
-        logger.error(f"Error detecting Chrome version: {e}")
-        return None
 
 
 # API statuses
@@ -254,21 +125,11 @@ async def get_openai_status() -> Dict[str, Any]:
 
             is_operational = "all impacted services have now fully recovered" in description_lower
             
-            return {
-                "name": name,
-                "status": "Operational" if is_operational else "Disrupted",
-                "status_url": status_url,
-                "issue_link": issue_link,
-            }
+            return build_operational_payload(name, is_operational, status_url, issue_link)
     except Exception as e:
         logger.error(f"Error fetching OpenAI status: {e}")
     
-    return {
-        "name": name,
-        "status": "Unknown",
-        "status_url": status_url,
-        "issue_link": "Refer to status page as no specific link is available"
-    }
+    return build_unknown_payload(name, status_url)
 
 async def get_deepseek_status() -> Dict[str, Any]:
     """
@@ -301,21 +162,11 @@ async def get_deepseek_status() -> Dict[str, Any]:
             # Look for specific keywords in the content
             is_operational = True if "resolved" in content_lower else False
             
-            return {
-                "name": name,
-                "status": "Operational" if is_operational else "Disrupted",
-                "status_url": status_url,
-                "issue_link": issue_link,
-            }
+            return build_operational_payload(name, is_operational, status_url, issue_link)
     except Exception as e:
         logger.error(f"Error fetching DeepSeek status: {e}")
     
-    return {
-        "name": name,
-        "status": "Unknown",
-        "status_url": status_url,
-        "issue_link": "Refer to status page as no specific link is available"
-    }
+    return build_unknown_payload(name, status_url)
 
 async def get_langsmith_status() -> Dict[str, Any]:
     """
@@ -346,21 +197,11 @@ async def get_langsmith_status() -> Dict[str, Any]:
             description_lower = description.lower()
             # Set to false if any of the keyword exist in description
             is_operational = "resolved" in description_lower or "complete" in description_lower
-            return {
-                "name": name,
-                "status": "Operational" if is_operational else "Disrupted", 
-                "status_url": status_url,
-                "issue_link": issue_link,
-            }
+            return build_operational_payload(name, is_operational, status_url, issue_link)
     except Exception as e:
         logging.error("Error fetching LangSmith status: %s", e)
     
-    return {
-        "name": name,
-        "status": "Unknown",
-        "status_url": status_url,
-        "issue_link": "Refer to status page as no specific link is available"
-    }
+    return build_unknown_payload(name, status_url)
 
 
 async def get_llamaindex_status() -> Dict[str, Any]:
@@ -396,382 +237,20 @@ async def get_llamaindex_status() -> Dict[str, Any]:
                 is_operational = True
                 break
         
-        return {
-            "name": name,
-            "status": "Operational" if is_operational else "Disrupted",
-            "status_url": status_url,
-            "issue_link": "Refer to status page as no specific link is available"
-        }
+        return build_operational_payload(name, is_operational, status_url)
 
     except Exception as e:
         logging.error("Error fetching LlamaIndex status: %s", e)
     
-    return {
-        "name": name,
-        "status": "Unknown",
-        "status_url": status_url,
-        "issue_link": "Refer to status page as no specific link is available"
-    }
+    return build_unknown_payload(name, status_url)
 
 
 # Dify status
 def get_dify_status() -> Dict[str, Any]:
-    """
-    Get Dify API status using Chrome driver.
-    
-    Operational Status Logic:
-    - Uses Chrome driver to fetch the Dify status page
-    - Waits for app-root element to load, then searches for expandable elements
-    - Clicks on expandable elements to reveal hidden content
-    - Searches for <div class="page-status status-none"> elements
-    - Checks if any h2 contains "all systems operational"
-    - If found: Status = "Operational"
-    - If not found: Status = "Disrupted"
-    - If Chrome driver fails or element not found: Status = "Unknown"
-    
-    Returns:
-        Dict containing status information
-    """
-    name = "Dify.AI"
-    status_url = 'https://dify.statuspage.io/'
-    cached_result = get_cached_browser_status("dify")
-    if cached_result is not None:
-        return cached_result
-    
-    # Use dedicated Dify Chrome driver instance to prevent interference
-    global _chrome_driver_dify
-    driver = None
-    
-    try:
-        # Check if we already have a Dify driver instance
-        if _chrome_driver_dify is not None:
-            try:
-                # Test if the existing driver is still functional
-                _chrome_driver_dify.current_url
-                driver = _chrome_driver_dify
-                logger.info("Reusing existing Dify Chrome driver instance")
-            except Exception:
-                # Driver is no longer functional, create a new one
-                logger.info("Existing Dify driver is no longer functional, creating new one")
-                _chrome_driver_dify = None
-        
-        if _chrome_driver_dify is None:
-            logger.info("Creating new Chrome driver for Dify status")
-            
-            chrome_options = Options()
-            chrome_options.add_argument("--headless")
-            chrome_options.add_argument("--no-sandbox")
-            chrome_options.add_argument("--disable-dev-shm-usage")
-            chrome_options.add_argument("--disable-gpu")
-            chrome_options.add_argument("--disable-extensions")
-            chrome_options.add_argument("--disable-plugins")
-            chrome_options.add_argument("--disable-images")
-            chrome_options.add_argument("--disable-javascript")
-            
-            # Try undetected_chromedriver first (more reliable)
-            try:
-                logger.info("Attempting to use undetected_chromedriver for Dify")
-                _chrome_driver_dify = uc.Chrome(
-                    options=chrome_options, 
-                    use_subprocess=True
-                )
-                logger.info("Successfully created undetected_chromedriver instance for Dify")
-            except Exception as uc_error:
-                logger.warning(f"undetected_chromedriver failed for Dify: {uc_error}")
-                logger.info("Falling back to ChromeDriverManager for Dify")
-                try:
-                    # Fallback to ChromeDriverManager
-                    options = webdriver.ChromeOptions()
-                    options.add_argument('--headless')
-                    options.add_argument("--disable-gpu")
-                    options.add_argument("--disable-dev-shm-usage")
-                    options.add_argument("--disable-extensions")
-                    options.add_argument("--disable-plugins")
-                    options.add_argument("--disable-images")
-                    options.add_argument("--disable-javascript")
-                    
-                    # Get ChromeDriver (download only if not found)
-                    driver_manager = ChromeDriverManager()
-                    driver_path = driver_manager.install()
-                    logger.info(f"ChromeDriver available at: {driver_path}")
-                    
-                    _chrome_driver_dify = webdriver.Chrome(
-                        service=Service(driver_path), 
-                        options=options
-                    )
-                    logger.info("Successfully created ChromeDriverManager instance for Dify")
-                except Exception as cm_error:
-                    logger.error(f"ChromeDriverManager also failed for Dify: {cm_error}")
-                    logger.warning("All Chrome methods failed for Dify")
-                    _chrome_driver_dify = None
-        
-        driver = _chrome_driver_dify
-        
-        if driver is not None:
-            logger.info("Using Chrome driver for Dify status")
-            # Navigate to the status page
-            driver.get(status_url)
-            # Wait for the page to load
-            wait = WebDriverWait(driver, 10)
-
-            # Try to find and click expandable elements to reveal the status
-            try:
-                # Look for clickable elements that might expand the status section
-                expandable_selectors = [
-                    "div[class*='page-status']",
-                    "div[class*='status-none']"
-                ]
-                
-                for selector in expandable_selectors:
-                    try:
-                        elements = driver.find_elements(By.CSS_SELECTOR, selector)
-                        for element in elements:
-                            if element.is_displayed() and element.is_enabled():
-                                logger.info(f"Dify: Found expandable element: {selector}")
-                                driver.execute_script("arguments[0].click();", element)
-                                time.sleep(0.3)  # Brief wait for expansion
-                                break
-                    except Exception as e:
-                        logger.debug(f"Selector {selector} not found or clickable: {e}")
-                        continue
-                
-                # Additional wait for content to expand after clicking
-                time.sleep(0.3)
-                
-            except Exception as e:
-                logger.warning(f"Could not find expandable elements: {e}")
-            
-            # Check for page-status status-none elements and h2 text
-            try:
-                # Wait for the specific status element to be present
-                wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.page-status.status-none")))
-                logger.info("Found page-status status-none element after expansion")
-                
-                # Get the element and find h2 elements
-                status_element = driver.find_element(By.CSS_SELECTOR, "div.page-status.status-none")
-                h2_elements = status_element.find_elements(By.TAG_NAME, "h2")
-                
-                is_operational = False
-                
-                # Check h2 elements for the text content
-                for h2 in h2_elements:
-                    text_content = h2.text.strip().lower()
-                    logger.info(f"Dify status text content from h2: {text_content}")
-                    
-                    key_phrase = "all systems operational"
-                    if key_phrase in text_content:
-                        logger.info(f"Dify: Found required key phrase: {key_phrase} to indicate no issue")
-                        is_operational = True
-                        break
-                
-                if not is_operational:
-                    logger.info("Dify: No required key phrase found - status is Disrupted")
-                
-                result = {
-                    "name": name,
-                    "status": "Operational" if is_operational else "Disrupted",
-                    "status_url": status_url,
-                    "issue_link": "Refer to status page as no specific link is available"
-                }
-                set_cached_browser_status("dify", result)
-                return result
-                
-            except Exception as e:
-                logger.warning(f"page-status status-none element not found after expansion: {e}")
-    
-    except Exception as e:
-        logger.error(f"Error fetching Dify status: {e}")
-    
-    result = {
-        "name": name,
-        "status": "Unknown",
-        "status_url": status_url,
-        "issue_link": "Refer to status page as no specific link is available"
-    }
-    set_cached_browser_status("dify", result)
-    return result
+    return browser_get_dify_status()
 
 def get_gemini_status() -> Dict[str, Any]:
-    """
-    Get Google Gemini API status using Chrome driver.
-    
-    Operational Status Logic:
-    - Uses Chrome driver to fetch the Gemini status page
-    - Waits for app-root element to load, then searches for expandable elements
-    - Clicks on expandable elements to reveal hidden content
-    - Searches for <div class="status-large operational"> elements
-    - Checks if any span contains "all systems operational"
-    - If found: Status = "Operational"
-    - If not found: Status = "Disrupted"
-    - If Chrome driver fails or element not found: Status = "Unknown"
-    
-    Returns:
-        Dict containing status information
-    """
-    name = "Google AI Studio and Gemini API Status"
-    status_url = 'https://aistudio.google.com/status'
-    cached_result = get_cached_browser_status("gemini")
-    if cached_result is not None:
-        return cached_result
-    
-    # Use dedicated Gemini Chrome driver instance to prevent interference
-    global _chrome_driver_gemini
-    driver = None
-    
-    try:
-        # Check if we already have a Gemini driver instance
-        if _chrome_driver_gemini is not None:
-            try:
-                # Test if the existing driver is still functional
-                _chrome_driver_gemini.current_url
-                driver = _chrome_driver_gemini
-                logger.info("Reusing existing Gemini Chrome driver instance")
-            except Exception:
-                # Driver is no longer functional, create a new one
-                logger.info("Existing Gemini driver is no longer functional, creating new one")
-                _chrome_driver_gemini = None
-        
-        if _chrome_driver_gemini is None:
-            logger.info("Creating new Chrome driver for Gemini status")
-            
-            # Try to get Chrome version first
-
-            chrome_options = Options()
-            chrome_options.add_argument("--headless")
-            chrome_options.add_argument("--no-sandbox")
-            chrome_options.add_argument("--disable-dev-shm-usage")
-            chrome_options.add_argument("--disable-gpu")
-            chrome_options.add_argument("--disable-extensions")
-            chrome_options.add_argument("--disable-plugins")
-            chrome_options.add_argument("--disable-images")
-            chrome_options.add_argument("--disable-javascript")
-            
-            # Try undetected_chromedriver first (more reliable)
-            try:
-                logger.info("Attempting to use undetected_chromedriver for Gemini")
-                _chrome_driver_gemini = uc.Chrome(
-                    options=chrome_options, 
-                    use_subprocess=True
-                )
-                logger.info("Successfully created undetected_chromedriver instance for Gemini")
-            except Exception as uc_error:
-                logger.warning(f"undetected_chromedriver failed for Gemini: {uc_error}")
-                logger.info("Falling back to ChromeDriverManager for Gemini")
-                try:
-                    # Fallback to ChromeDriverManager
-                    options = webdriver.ChromeOptions()
-                    options.add_argument('--headless')
-                    options.add_argument("--disable-gpu")
-                    options.add_argument("--disable-dev-shm-usage")
-                    options.add_argument("--disable-extensions")
-                    options.add_argument("--disable-plugins")
-                    options.add_argument("--disable-images")
-                    options.add_argument("--disable-javascript")
-                    
-                    # Get ChromeDriver (download only if not found)
-                    driver_manager = ChromeDriverManager()
-                    driver_path = driver_manager.install()
-                    logger.info(f"ChromeDriver available at: {driver_path}")
-                    
-                    _chrome_driver_gemini = webdriver.Chrome(
-                        service=Service(driver_path), 
-                        options=options
-                    )
-                    logger.info("Successfully created ChromeDriverManager instance for Gemini")
-                except Exception as cm_error:
-                    logger.error(f"ChromeDriverManager also failed for Gemini: {cm_error}")
-                    logger.warning("All Chrome methods failed for Gemini")
-                    _chrome_driver_gemini = None
-        
-        driver = _chrome_driver_gemini
-        
-        if driver is not None:
-            logger.info("Using Chrome driver for Gemini status")
-            # Navigate to the status page
-            driver.get(status_url)
-            # Wait for the page to load
-            wait = WebDriverWait(driver, 10)
-            
-            # Wait for the main app-root element to be present first
-            wait.until(EC.presence_of_element_located((By.TAG_NAME, "app-root")))
-            logger.info("Gemini: Found app-root element, now looking for expandable elements")
-            
-            # Try to find and click expandable elements to reveal the status
-            try:
-                # Look for clickable elements that might expand the status section
-                # Hierarchy: app-root > ms-status-page > container > status-large
-                expandable_selectors = [
-                    "app-root",
-                    "ms-status-page",
-                    "div[class*='status-page-container']",
-                    "div[class*='status-large']",
-                ]
-                
-                for selector in expandable_selectors:
-                    try:
-                        elements = driver.find_elements(By.CSS_SELECTOR, selector)
-                        for element in elements:
-                            if element.is_displayed() and element.is_enabled():
-                                logger.info(f"Gemini: Found expandable element: {selector}")
-                                driver.execute_script("arguments[0].click();", element)
-                                time.sleep(0.3)  # Brief wait for expansion
-                                break
-                    except Exception as e:
-                        logger.debug(f"Selector {selector} not found or clickable: {e}")
-                        continue
-                
-                # Additional wait for content to expand after clicking
-                time.sleep(0.3)
-                
-            except Exception as e:
-                logger.warning(f"Could not find expandable elements: {e}")
-            
-            # Check for its second child span to see if there is text "All Systems Operational" using lowercase check
-            try:
-                # Wait for the specific status element to be present
-                wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.status-large")))
-                logger.info("Found status-large element after expansion")
-                
-                # Get the element and find all spans
-                status_element = driver.find_element(By.CSS_SELECTOR, "div.status-large")
-                spans = status_element.find_elements(By.TAG_NAME, "span")
-                
-                is_operational = False
-
-                # Check the second span (index 1) for the text content
-                if len(spans) >= 2:
-                    text_content = spans[1].text.strip().lower()
-                    logger.info(f"Gemini status text content from second span: {text_content}")
-
-                    key_phrase = "all systems operational"
-                    if key_phrase in text_content:
-                        logger.info(f"Gemini: Found required key phrase: {key_phrase} to indicate no issue")
-                        is_operational = True
-                    else:
-                        logger.info("Gemini: No required key phrase found - status is Disrupted")
-                    
-                result = {
-                    "name": name,
-                    "status": "Operational" if is_operational else "Disrupted",
-                    "status_url": status_url,
-                    "issue_link": "Refer to status page as no specific link is available"
-                }
-                set_cached_browser_status("gemini", result)
-                return result
-            except Exception as e:
-                logger.warning(f"status-large operational element not found after expansion: {e}")
-    
-    except Exception as e:
-        logger.error(f"Error fetching Gemini status: {e}")
-    
-    result = {
-        "name": name,
-        "status": "Unknown",
-        "status_url": status_url,
-        "issue_link": "Refer to status page as no specific link is available"
-    }
-    set_cached_browser_status("gemini", result)
-    return result
+    return browser_get_gemini_status()
 
 # Add get perplexity status
 async def get_perplexity_status() -> Dict[str, Any]:
@@ -802,21 +281,11 @@ async def get_perplexity_status() -> Dict[str, Any]:
             description_lower = description.lower()
             is_operational = "resolved" in description_lower and not "api outage" in description_lower
             
-            return {
-                "name": name,
-                "status": "Operational" if is_operational else "Disrupted",
-                "status_url": status_url,
-                "issue_link": issue_link,
-            }
+            return build_operational_payload(name, is_operational, status_url, issue_link)
     except Exception as e:
         logger.error(f"Error fetching Perplexity status: {e}")
     
-    return {
-        "name": name,
-        "status": "Unknown",
-        "status_url": status_url,
-        "issue_link": "Refer to status page as no specific link is available"
-    }
+    return build_unknown_payload(name, status_url)
 
 async def get_anthropic_status() -> Dict[str, Any]:
     """
@@ -845,21 +314,11 @@ async def get_anthropic_status() -> Dict[str, Any]:
             description_lower = description.lower()
             is_operational = "resolved" in description_lower
             
-            return {
-                "name": name,
-                "status": "Operational" if is_operational else "Disrupted",
-                "status_url": status_url,
-                "issue_link": issue_link,
-            }
+            return build_operational_payload(name, is_operational, status_url, issue_link)
     except Exception as e:
         logger.error(f"Error fetching Anthropic status: {e}")
     
-    return {
-        "name": name,
-        "status": "Unknown",
-        "status_url": status_url,
-        "issue_link": "Refer to status page as no specific link is available"
-    }
+    return build_unknown_payload(name, status_url)
 
 # Cloud related status using single RSS source
 async def get_gcp_status() -> Dict[str, Any]:
@@ -892,23 +351,11 @@ async def get_gcp_status() -> Dict[str, Any]:
             title_lower = title.lower()
             is_operational = "resolved:" in title_lower
             
-            return {
-                "name": name,
-                "status": "Operational" if is_operational else "Disrupted",
-                "status_url": status_url,
-                "issue_link": (
-                    "Refer to status page as no specific link is available"
-                ),  # No specific issue link provided in the status page
-            }
+            return build_operational_payload(name, is_operational, status_url)
     except Exception as e:
         logger.error(f"Error fetching GCP status: {e}")
     
-    return {
-        "name": name,
-        "status": "Unknown",
-        "status_url": status_url,
-        "issue_link": "Refer to status page as no specific link is available"
-    }
+    return build_unknown_payload(name, status_url)
 
 async def get_azure_status() -> Dict[str, Any]:
     """
@@ -933,34 +380,15 @@ async def get_azure_status() -> Dict[str, Any]:
         if feed.entries:
             logger.info("Found feed in Azure, indicates ongoing issues")
     
-            return {
-                "name": name,
-                "status": "Disrupted",
-                "status_url": status_url,
-                "issue_link": (
-                    "Refer to status page as no specific link is available"
-                ),  # No specific issue link provided in the status page
-            }
+            return build_status_payload(name, "Disrupted", status_url)
         # No feed found, assume operational
         else:
             logger.info("Azure: No feed found, indicates normal status")
-            return {
-                "name": name,
-                "status": "Operational",
-                "status_url": status_url,
-                "issue_link": (
-                    "Refer to status page as no specific link is available"
-                ),  # No specific issue link provided in the status page
-            }
+            return build_status_payload(name, "Operational", status_url)
     except Exception as e:
         logger.error(f"Error fetching Azure status: {e}")
 
-    return {
-        "name": name,
-        "status": "Unknown",
-        "status_url": status_url,
-        "issue_link": "Refer to status page as no specific link is available"
-    }
+    return build_unknown_payload(name, status_url)
 
 async def get_aws_status() -> Dict[str, Any]:
     """
@@ -985,226 +413,17 @@ async def get_aws_status() -> Dict[str, Any]:
         if feed.entries:
             logger.info("Found feed in AWS, indicates ongoing issues")
 
-            return {
-                "name": name,
-                "status": "Disrupted",
-                "status_url": status_url,
-                "issue_link": (
-                    "Refer to status page as no specific link is available"
-                ),  # No specific issue link provided in the status page
-            }
+            return build_status_payload(name, "Disrupted", status_url)
         # No feed found, assume operational
         else:
             logger.info("AWS: No feed found, indicates normal status")
-            return {
-                "name": name,
-                "status": "Operational",
-                "status_url": status_url,
-                "issue_link": (
-                    "Refer to status page as no specific link is available"
-                ),  # No specific issue link provided in the status page
-            }
+            return build_status_payload(name, "Operational", status_url)
 
     except Exception as e:
         logger.error(f"Error fetching AWS status: {e}")
     
-    return {
-        "name": name,
-        "status": "Unknown",
-        "status_url": status_url,
-        "issue_link": "Refer to status page as no specific link is available"
-    }
+    return build_unknown_payload(name, status_url)
 
 
 def get_alicloud_status() -> Dict[str, Any]:
-    """
-    Get Alibaba Cloud status from their status page using Chrome driver.
-    
-    Operational Status Logic:
-    - Uses Chrome driver to fetch the Alibaba Cloud status page
-    - Waits for main container to load, then searches for expandable elements
-    - Clicks on expandable elements (buttons, toggles) to reveal hidden content
-    - Searches for <div class="cms-title-noEvent-child"> elements after expansion
-    - If found: Status = "Operational" (no incidents)
-    - If not found: Status = "Disrupted" (incidents present)
-    - If Chrome driver fails or element not found: Status = "Unknown"
-    
-    Returns:
-        Dict containing status information
-    """
-    name = "Alibaba Cloud Health Status"
-    status_url = 'https://status.alibabacloud.com'
-    cached_result = get_cached_browser_status("alicloud")
-    if cached_result is not None:
-        return cached_result
-    
-    # Use dedicated Alibaba Cloud Chrome driver instance to prevent interference
-    global _chrome_driver_alicloud
-    driver = None
-    
-    try:
-        # Check if we already have an Alibaba Cloud driver instance
-        if _chrome_driver_alicloud is not None:
-            try:
-                # Test if the existing driver is still functional
-                _chrome_driver_alicloud.current_url
-                driver = _chrome_driver_alicloud
-                logger.info("Reusing existing Alibaba Cloud Chrome driver instance")
-            except Exception:
-                # Driver is no longer functional, create a new one
-                logger.info("Existing Alibaba Cloud driver is no longer functional, creating new one")
-                _chrome_driver_alicloud = None
-        
-        if _chrome_driver_alicloud is None:
-            logger.info("Creating new Chrome driver for Alibaba Cloud status")
-            
-            chrome_options = Options()
-            chrome_options.add_argument("--headless")
-            chrome_options.add_argument("--no-sandbox")
-            chrome_options.add_argument("--disable-dev-shm-usage")
-            chrome_options.add_argument("--disable-gpu")
-            chrome_options.add_argument("--disable-extensions")
-            chrome_options.add_argument("--disable-plugins")
-            chrome_options.add_argument("--disable-images")
-            chrome_options.add_argument("--disable-javascript")
-            
-            # Try undetected_chromedriver first (more reliable)
-            try:
-                logger.info("Attempting to use undetected_chromedriver for Alibaba Cloud")
-                _chrome_driver_alicloud = uc.Chrome(
-                    options=chrome_options, 
-                    use_subprocess=True
-                )
-                logger.info("Successfully created undetected_chromedriver instance for Alibaba Cloud")
-            except Exception as uc_error:
-                logger.warning(f"undetected_chromedriver failed for Alibaba Cloud: {uc_error}")
-                logger.info("Falling back to ChromeDriverManager for Alibaba Cloud")
-                try:
-                    # Fallback to ChromeDriverManager
-                    options = webdriver.ChromeOptions()
-                    options.add_argument('--headless')
-                    options.add_argument("--disable-gpu")
-                    options.add_argument("--disable-dev-shm-usage")
-                    options.add_argument("--disable-extensions")
-                    options.add_argument("--disable-plugins")
-                    options.add_argument("--disable-images")
-                    options.add_argument("--disable-javascript")
-                    
-                    # Try to get ChromeDriver (download only if not found)
-                    try:
-                        # Check if driver already exists, download only if needed
-                        driver_manager = ChromeDriverManager()
-                        driver_path = driver_manager.install()
-                        logger.info(f"ChromeDriver available at: {driver_path}")
-                        
-                        # Add additional Chrome options for compatibility
-                        options.add_argument("--no-sandbox")
-                        options.add_argument("--disable-dev-shm-usage")
-                        options.add_argument("--remote-debugging-port=9222")
-                        
-                        _chrome_driver_alicloud = webdriver.Chrome(
-                            service=Service(driver_path), 
-                            options=options
-                        )
-                    except Exception as driver_error:
-                        logger.error(f"ChromeDriverManager failed: {driver_error}")
-                        raise driver_error
-                    logger.info("Successfully created ChromeDriverManager instance for Alibaba Cloud")
-                except Exception as cm_error:
-                    logger.error(f"ChromeDriverManager also failed for Alibaba Cloud: {cm_error}")
-                    logger.warning("All Chrome methods failed for Alibaba Cloud")
-                    _chrome_driver_alicloud = None
-        
-        driver = _chrome_driver_alicloud
-        
-        if driver is not None:
-            logger.info("Using Chrome driver for Alibaba Cloud status")
-            # Navigate to the status page
-            driver.get(status_url)
-            # Wait for the page to load
-            wait = WebDriverWait(driver, 10)
-            
-            # Wait for the main container to be present first
-            wait.until(EC.presence_of_element_located((By.ID, "container")))
-            logger.info("Found main container, now looking for expandable elements")
-            
-            # Try to find and click expandable elements to reveal the status
-            try:
-                # Look for clickable elements that might expand the status section
-                # Common patterns: buttons, links, or divs with click handlers
-                expandable_selectors = [
-                    ".cms-title-con-tt",  # Based on your hierarchy description
-                    ".cms-title-bt"       # Based on your hierarchy description
-                ]
-                
-                for selector in expandable_selectors:
-                    try:
-                        elements = driver.find_elements(By.CSS_SELECTOR, selector)
-                        for element in elements:
-                            if element.is_displayed() and element.is_enabled():
-                                logger.info(f"Found expandable element: {selector}")
-                                driver.execute_script("arguments[0].click();", element)
-                                time.sleep(0.3)  # Brief wait for expansion
-                                break
-                    except Exception as e:
-                        logger.debug(f"Selector {selector} not found or clickable: {e}")
-                        continue
-                
-                # Additional wait for content to expand after clicking
-                time.sleep(0.5)
-                
-            except Exception as e:
-                logger.warning(f"Could not find expandable elements: {e}")
-            
-            # Now wait for the specific status element to be present
-            try:
-                wait.until(EC.presence_of_element_located((By.CLASS_NAME, "cms-title-noEvent-child")))
-                logger.info("Found cms-title-noEvent-child element after expansion")
-                
-                # Get the element and check its text content
-                element = driver.find_element(By.CLASS_NAME, "cms-title-noEvent-child")
-                is_operational = False
-                # Use Selenium WebElement's text property
-                text_content = element.text.strip().lower()
-                logger.info(f"Alibaba Cloud text content: {text_content}")
-                
-                key_phrase = "no incident, everything is normal"
-                if key_phrase in text_content:
-                    logger.info(f"Alibaba Cloud: Found required key phrase: {key_phrase} to indicate no issue")
-                    is_operational = True
-                else:
-                    logger.info("Alibaba Cloud: No required key phrase found - status is Disrupted")
-                
-                result = {
-                    "name": name,
-                    "status": "Operational" if is_operational else "Disrupted",
-                    "status_url": status_url,
-                    "issue_link": "Refer to status page as no specific link is available"
-                }
-                set_cached_browser_status("alicloud", result)
-                return result
-                
-            except Exception as e:
-                logger.error(f"Error parsing Alibaba Cloud status: {e}")
-                result = {
-                    "name": name,
-                    "status": "Unknown",
-                    "status_url": status_url,
-                    "issue_link": "Refer to status page as no specific link is available"
-                }
-                set_cached_browser_status("alicloud", result)
-                return result
-        
-    except Exception as e:
-        logger.error(f"Error getting Alibaba Cloud status from url: {status_url}. Error: {e}")
-    
-    # If we reach here, Chrome method failed
-    logger.warning("Chrome method failed for Alibaba Cloud status, returning error status")
-    result = {
-        "name": name,
-        "status": "Unknown",
-        "status_url": status_url,
-        "issue_link": "Refer to status page as no specific link is available"
-    }
-    set_cached_browser_status("alicloud", result)
-    return result
+    return browser_get_alicloud_status()
