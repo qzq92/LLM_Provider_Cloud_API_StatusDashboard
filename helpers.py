@@ -158,7 +158,7 @@ async def get_deepseek_status() -> Dict[str, Any]:
     try:
         rss_url = 'https://status.deepseek.com/history.atom'
         status_url = 'https://status.deepseek.com'
-        feed = feedparser.parse(fetch_remote_content(rss_url)) 
+        feed = feedparser.parse(fetch_remote_content(rss_url))
         if feed.entries:
             latest_entry = feed.entries[0]
             issue_link = latest_entry.link
